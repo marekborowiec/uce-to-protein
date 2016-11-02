@@ -212,7 +212,11 @@ def main():
         file_name = a.group(1)
         database = b.group(1)
         print("Blasting file {} against protein database {}...".format(file_name, database))
-        return subprocess.call(call_string, shell=True)
+        try:
+            p = subprocess.call(call_string, shell=True)
+        except KeyboardInterrupt:
+            print("\nYou killed the query")
+            sys.exit()
    
     # initialize parsed arguments and batabase creator object
     kwargs = run()
@@ -224,14 +228,20 @@ def main():
 
     if db_creator.command == "query":
         if int(kwargs["cores"]) == 1:
-            #print(kwargs["query"])
             for file in kwargs["query"]:
                 blast_command = get_blast_call_string(file, kwargs["input_db_name"])
                 call_blast(blast_command)
+
         if int(kwargs["cores"]) > 1:
             commands = [get_blast_call_string(file, kwargs["input_db_name"]) for file in kwargs["query"]]
             pool = dummyPool(int(kwargs["cores"]))
-            pool.map(call_blast, commands)
+            try:
+                pool.map(call_blast, commands)
+            except KeyboardInterrupt:
+                pool.close()
+                pool.terminate()
+                print("\nYou killed the query")
+                sys.exit()
 
     if db_creator.command == "parse":
         for file_name in kwargs["xml_files"]:
