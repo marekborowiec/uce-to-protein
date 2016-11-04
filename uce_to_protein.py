@@ -132,7 +132,9 @@ def main():
         highest_scoring_dict = {}
         try:
             for item in records:
-
+                #print(dir(item))
+                query_len = item.query_letters
+                #print(query_len)
                 species_dict = defaultdict(list)
 
                 for alignment in item.alignments:
@@ -140,22 +142,33 @@ def main():
                 #print(species_dict.items())
                 for species, alignments in species_dict.items():
                     #print(species)
-                    species_scores = []
+                    total_species_scores = []
+                    max_species_scores = []
                     for alignment in alignments:
                         scores = [hsp.score for hsp in alignment.hsps]
-                        alignment_score = sum(scores)
-                        species_scores.append(alignment_score)
-                    #all_scores = [score for scores in species_scores for score in alignment_score]
-                    #print(species_scores)
+                        total_alignment_score = sum(scores)
+                        max_alignment_score = max(scores)
+                        total_species_scores.append(total_alignment_score)
+                        max_species_scores.append(max_alignment_score)
+
                     for alignment in alignments:
                         scores = [hsp.score for hsp in alignment.hsps]
-                        alignment_score = sum(scores)
-                       #print(all_scores)
-                        if alignment_score == max(species_scores):
-                            query = ''.join([hsp.query for hsp in alignment.hsps])
-                            #no_gaps_query = ''.join([char for char in query if char not in missing])
-                            if len(query) >= 30:
-                                highest_scoring_dict[species] = (query, alignment_score, alignment.length, alignment.title)  
+                        total_alignment_score = sum(scores)
+                        max_alignment_score = max(scores)
+                        query = ''.join([hsp.query for hsp in alignment.hsps])
+                        # if total score equals max score and is also best total score, take it
+                        if total_alignment_score == max_alignment_score and total_alignment_score == max(total_species_scores):
+                            highest_scoring_dict[species] = query
+                        # if total score > max score, check if this is the best total score
+                        elif total_alignment_score > max_alignment_score and total_alignment_score == max(total_species_scores):
+                            # if the query is not too long, keep it
+                            if len(query) >= 30 and len(query) <= query_len / 3:
+                                highest_scoring_dict[species] = query
+                        # if total score equals max score but is not the best total score, check if it is best max score, then take it
+                        elif total_alignment_score == max_alignment_score and max_alignment_score == max(max_species_scores):
+                            highest_scoring_dict[species] = query
+                         # else skip it
+
                             #print(">{}".format(species))
                         #print('sequence:', alignment.title) 
                         #print('length:', alignment.length)
@@ -175,7 +188,7 @@ def main():
         return highest_scoring_dict
 
     def output_fasta(highest_scoring_dict):
-        fasta_string = '\n'.join(['>{}\n{}'.format(species, tpl[0]) for species, tpl in highest_scoring_dict.items()])
+        fasta_string = '\n'.join(['>{}\n{}'.format(species, seq) for species, seq in highest_scoring_dict.items()])
         return fasta_string
 
     def write_fasta(in_file_name, fasta_string):
