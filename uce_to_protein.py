@@ -188,7 +188,14 @@ def main():
         return highest_scoring_dict
 
     def output_fasta(highest_scoring_dict):
-        fasta_string = '\n'.join(['>{}\n{}'.format(species, seq) for species, seq in highest_scoring_dict.items()])
+        # print FASTA string
+        # each sequence line will have 80 characters 
+        n = 80
+        # for each element of species : seq dictionary,
+        # split sequence into list of string, each n chars long
+        # then join everything with newline 
+        fasta_string = '\n'.join(['>{}\n{}'.format(species, '\n'.join([seq[i:i+n] for i in range(0, len(seq), n)])) \
+         for species, seq in sorted(highest_scoring_dict.items())])
         return fasta_string
 
     def write_fasta(in_file_name, fasta_string):
