@@ -1,11 +1,33 @@
 #! /usr/bin/env python3
 
+"""
+uce_to_protein.py is a script that provides an automated workflow 
+to extract protein-coding sequences from Phyluce-derived datasets 
+of ultraconserved elements.
+
+Copyright (C) 2016 Marek Borowiec 
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+"""
+
 import argparse, re, subprocess, sys
 from collections import defaultdict
 from multiprocessing.dummy import Pool as dummyPool
 from Bio.Blast import NCBIXML
 from xml.parsers.expat import ExpatError
 
+__version__ = "0.1"
 
 class ParsedArgs:
 
@@ -36,7 +58,7 @@ Use uce_to_protein <command> -h for help with arguments of the command of intere
         getattr(self, self.args.command)()
 
     def db(self):
-       # database creation command
+        """ command that wraps BLAST for creating protein database """
         parser = argparse.ArgumentParser(
             description="Create a BLAST database",
         )
@@ -58,7 +80,7 @@ Use uce_to_protein <command> -h for help with arguments of the command of intere
         return args
 
     def query(self):
-       # database query command
+        """ command that wraps BLAST to query UCE alignment against protein database """
         parser = argparse.ArgumentParser(
             description="Query existing protein database with unaligned UCE sequences",
         )
@@ -91,7 +113,7 @@ Use uce_to_protein <command> -h for help with arguments of the command of intere
         return args
 
     def parse(self):
-       # parse xml output of BLASTX
+        """ command to parse BLASTX output produced by query command """
         parser = argparse.ArgumentParser(
             description="Parse xml output of BLAST",
         )
@@ -109,7 +131,7 @@ Use uce_to_protein <command> -h for help with arguments of the command of intere
         return args
 
     def get_args_dict(self):
-    # store arguments in a dictionary
+        """ store arguments in a dictionary """
         command = self.args.__dict__
         arguments = getattr(self, self.args.command)().__dict__
         argument_dictionary = command.copy()
@@ -118,77 +140,71 @@ Use uce_to_protein <command> -h for help with arguments of the command of intere
         return argument_dictionary
 
 class DbCreator():
-    """Given arguments, creates a protein database using 'makeblastdb'"""
+    """ given arguments, create a protein database using 'makeblastdb' """
     def __init__(self, **kwargs):
         self.command = kwargs.get("command")
         
 
 def main():
 
+    def get_query_string(alignment):
+        """ get query string from all matches in alignment """
+
+        return ''.join([hsp.query for hsp in alignment.hsps if "*" not in hsp.query])
+
     def get_highest_scoring(records):
-        # list of missing characters in protein sequences
-        missing = ["X",".","*","-","?"]
+        """ get a dictionary of { species : 'best' hit } from parsed BLASTX output """
         # dictionary of highest cumulative scores for each hit ("alignment")
         highest_scoring_dict = {}
         try:
             for item in records:
-                #print(dir(item))
                 query_len = item.query_letters
-                #print(query_len)
                 species_dict = defaultdict(list)
 
                 for alignment in item.alignments:
                     species_dict[item.query].append(alignment)
-                #print(species_dict.items())
+
                 for species, alignments in species_dict.items():
-                    #print(species)
                     total_species_scores = []
                     max_species_scores = []
                     for alignment in alignments:
-                        scores = [hsp.score for hsp in alignment.hsps]
-                        total_alignment_score = sum(scores)
-                        max_alignment_score = max(scores)
-                        total_species_scores.append(total_alignment_score)
-                        max_species_scores.append(max_alignment_score)
+                        scores = [hsp.score for hsp in alignment.hsps] #if "*" not in hsp.query]
+                        if scores:
+                            total_alignment_score = sum(scores)
+                            max_alignment_score = max(scores)
+                            total_species_scores.append(total_alignment_score)
+                            max_species_scores.append(max_alignment_score)
 
                     for alignment in alignments:
-                        scores = [hsp.score for hsp in alignment.hsps]
-                        total_alignment_score = sum(scores)
-                        max_alignment_score = max(scores)
-                        query = ''.join([hsp.query for hsp in alignment.hsps])
-                        # if total score equals max score and is also best total score, take it
-                        if total_alignment_score == max_alignment_score and total_alignment_score == max(total_species_scores):
-                            highest_scoring_dict[species] = query
-                        # if total score > max score, check if this is the best total score
-                        elif total_alignment_score > max_alignment_score and total_alignment_score == max(total_species_scores):
-                            # if the query is not too long, keep it
-                            if len(query) >= 30 and len(query) <= query_len / 3:
+                        scores = [hsp.score for hsp in alignment.hsps] #if "*" not in hsp.query]
+                        if scores:
+                            total_alignment_score = sum(scores)
+                            max_alignment_score = max(scores)
+                            # if total score equals max score and is also best total score, take it
+                            if total_alignment_score == max_alignment_score and total_alignment_score == max(total_species_scores):
+                                query = get_query_string(alignment)
                                 highest_scoring_dict[species] = query
-                        # if total score equals max score but is not the best total score, check if it is best max score, then take it
-                        elif total_alignment_score == max_alignment_score and max_alignment_score == max(max_species_scores):
-                            highest_scoring_dict[species] = query
-                         # else skip it
+                            # if total score > max score, check if this is the best total score
+                            elif total_alignment_score > max_alignment_score and total_alignment_score == max(total_species_scores):
+                                # if the query is not too long, keep it
+                                query = get_query_string(alignment)
+                                if len(query) >= 30 and len(query) <= query_len / 3:
+                                    highest_scoring_dict[species] = query
+                            # if total score equals max score but is not the best total score, check if it is best max score, then take it
+                            # else skip it
+                            elif total_alignment_score == max_alignment_score and max_alignment_score == max(max_species_scores):
+                                query = get_query_string(alignment)
+                                highest_scoring_dict[species] = query
 
-                            #print(">{}".format(species))
-                        #print('sequence:', alignment.title) 
-                        #print('length:', alignment.length)
-                                #print(hsp.score)   
-                        #print('gaps:', hsp.gaps)
-                        #print('e value:', hsp.expect)
-                            #print(hsp.query)
-                        #print(hsp.match[0:90] + '...')
-                        #print(hsp.sbjct[0:90] + '...')
-                        #for species, hsp in best_scoring_records.items():
-                            #print(species)
-                    #print(tpl[1].query)
-                    #print(tpl[1].score)
         except ExpatError:
             print("Unexpected end of xml file...")
+        #for sp, seq in highest_scoring_dict.items():
+            #print(sp, seq, "\n")
 
         return highest_scoring_dict
 
     def output_fasta(highest_scoring_dict):
-        # print FASTA string
+        """ produce a FASTA string from dictionary of best hits """
         # each sequence line will have 80 characters 
         n = 80
         # for each element of species : seq dictionary,
@@ -199,34 +215,36 @@ def main():
         return fasta_string
 
     def write_fasta(in_file_name, fasta_string):
+        """ write FASTA file """
         new_output_name = re.sub(".xml", "", file_name)
         out_file_name = "protein-{}".format(new_output_name)
-        f = open(out_file_name, "w")
-        f.write(fasta_string)
-        f.close()
+        with open(out_file_name, "w") as f:
+            f.write(fasta_string)
 
-    def xml_parser(xml_file):
-        f = open(xml_file)
-        records = NCBIXML.parse(f)
-        return records
+    def xml_parse(xml_file_name):
+        """ parse XML BLASTX output file """
+        with open(xml_file_name, "r") as f:
+            records = NCBIXML.parse(f)
+            return get_highest_scoring(records)
 
-    def output_parsed(file_name, records):
+    def output_parsed(file_name):
+        """ write output of query command """
         new_output_name = re.sub(".xml", "", file_name)
-        f = open(file_name)
-        highest_scoring_dict = get_highest_scoring(records)
+        highest_scoring_dict = xml_parse(file_name)
         fasta_string = output_fasta(highest_scoring_dict)
         if fasta_string:
             print("Writing FASTA file protein-{}...".format(new_output_name))
             write_fasta(file_name, fasta_string)
         else:
             print("File {} contains no protein matches".format(file_name))
-        f.close()
 
     def get_blast_call_string(in_file, db_name):
+        """ make command line call string for BLASTX """
         call_string = "blastx -query {0} -db {1} -outfmt 5 -evalue 10e-5 > {0}.xml".format(in_file, db_name)
         return call_string
 
     def call_blast(call_string):
+        """ make command line call for BLASTX """
         a = re.search("-query (\S+)", call_string)
         b = re.search("-db (\S+)", call_string)
         file_name = a.group(1)
@@ -265,8 +283,7 @@ def main():
 
     if db_creator.command == "parse":
         for file_name in kwargs["xml_files"]:
-            records = xml_parser(file_name)
-            output_parsed(file_name, records)
+            output_parsed(file_name)
 
 def run():
 
