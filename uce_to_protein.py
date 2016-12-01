@@ -155,7 +155,7 @@ def find_intron(string):
 
 def get_query_string(alignment):
     """ get query string from all matches in alignment """
-    return ''.join([hsp.query for hsp in alignment.hsps]) # if "*" not in hsp.query])
+    return ''.join([hsp.query for hsp in alignment.hsps])
 
 def get_match_string(alignment):
     """ get match string from all matches in alignment """
@@ -169,11 +169,36 @@ def get_bits_string(alignment):
     """ get bits string from all matches in alignment """
     return ''.join([str(hsp.bits) for hsp in alignment.hsps])
 
+def get_frames(alignment):
+    """ get frames from all matches in alignment """
+    return [str(hsp.frame) for hsp in alignment.hsps]
+
+def get_strands(alignment):
+    """ get strands from all matches in alignment """
+    return [str(hsp.strand) for hsp in alignment.hsps]
+
+def get_query_starts(alignment):
+    """ get query starts from all matches in alignment """
+    return [str(hsp.query_start) for hsp in alignment.hsps]
+
+def add_to_highest_scoring_dict(dictionary, key, alignment, check_length="no", query_length=0):
+    """ assign items to dictionary of highest scoring hits """
+    query = get_query_string(alignment)
+    subject = get_subject_string(alignment)
+    bits = get_bits_string(alignment)
+    frames = get_frames(alignment)
+    strands = get_strands(alignment)
+    query_starts = get_query_starts(alignment)
+    if check_length == "yes":
+            if len(query) >= 30 and len(query) <= query_length / 3:
+                dictionary[key] = (query, subject, bits, frames, strands, query_starts)
+    elif check_length == "no":
+        dictionary[key] = (query, subject, bits, frames, strands, query_starts)
+
 def get_highest_scoring(records):
     """ get a dictionary of { species : 'best' hit } from parsed BLASTX output """
     # dictionary of highest cumulative scores for each hit ("alignment")
     highest_scoring_dict = {}
-
     try:
         for item in records:
             query_len = item.query_letters
@@ -200,28 +225,28 @@ def get_highest_scoring(records):
                         max_alignment_score = max(scores)
                         # if total score equals max score and is also best total score, take it
                         if total_alignment_score == max_alignment_score and total_alignment_score == max(total_species_scores):
-                            query = get_query_string(alignment)
-                            subject = get_subject_string(alignment)
-                            bits = get_bits_string(alignment)
-                            highest_scoring_dict[species] = (query, subject, bits)
+                            add_to_highest_scoring_dict(highest_scoring_dict, species, alignment)
                         # if total score > max score, check if this is the best total score
                         elif total_alignment_score > max_alignment_score and total_alignment_score == max(total_species_scores):
                             # if the query is not too long, keep it
-                            query = get_query_string(alignment)
-                            subject = get_subject_string(alignment)
-                            bits = get_bits_string(alignment)
-                            if len(query) >= 30 and len(query) <= query_len / 3:
-                                highest_scoring_dict[species] = (query, subject, bits)
+                            add_to_highest_scoring_dict(highest_scoring_dict, species, alignment, check_length="yes", query_length=query_len)
                         # if total score equals max score but is not the best total score, check if it is best max score, then take it
                         # else skip it
                         elif total_alignment_score == max_alignment_score and max_alignment_score == max(max_species_scores):
-                            query = get_query_string(alignment)
-                            subject = get_subject_string(alignment)
-                            bits = get_bits_string(alignment)
-                            highest_scoring_dict[species] = (query, subject, bits) # This and two above should be moved to a function
+                            add_to_highest_scoring_dict(highest_scoring_dict, species, alignment)
 
     except ExpatError:
         print("Unexpected end of xml file...")
+
+    for species, record in highest_scoring_dict.items():
+        query = record[0]
+        subject = record[1]
+        bits = record[2]
+        frames = record[3]
+        strands = record[4]
+        query_s = record[5]
+
+        print('Species: {}\n\nQuery: {}\nSubject: {}\nFrames: {}\nStrands: {}\nQuery start: {}\n'.format(species, query, subject, frames, strands, query_s))
 
     return highest_scoring_dict
 
@@ -329,34 +354,34 @@ def call_blast(call_string):
 
 def main():
 
-	# initialize parsed arguments and batabase creator object
-	kwargs = run()
-	db_creator = DbCreator(**kwargs)
-	   
-	if db_creator.command == "db":
-	    call_string = "makeblastdb -in {} -dbtype prot -out {}".format(kwargs["prot_input"], kwargs["output_db_name"])
-	    subprocess.call(call_string, shell=True)
+    # initialize parsed arguments and batabase creator object
+    kwargs = run()
+    db_creator = DbCreator(**kwargs)
+       
+    if db_creator.command == "db":
+        call_string = "makeblastdb -in {} -dbtype prot -out {}".format(kwargs["prot_input"], kwargs["output_db_name"])
+        subprocess.call(call_string, shell=True)
 
-	if db_creator.command == "query":
-	    if int(kwargs["cores"]) == 1:
-	        for file in kwargs["query"]:
-	            blast_command = get_blast_call_string(file, kwargs["input_db_name"])
-	            call_blast(blast_command)
+    if db_creator.command == "query":
+        if int(kwargs["cores"]) == 1:
+            for file in kwargs["query"]:
+                blast_command = get_blast_call_string(file, kwargs["input_db_name"])
+                call_blast(blast_command)
 
-	    if int(kwargs["cores"]) > 1:
-	        commands = [get_blast_call_string(file, kwargs["input_db_name"]) for file in kwargs["query"]]
-	        pool = dummyPool(int(kwargs["cores"]))
-	        try:
-	            pool.map(call_blast, commands)
-	        except KeyboardInterrupt:
-	            pool.close()
-	            pool.terminate()
-	            print("\nYou killed the query")
-	            sys.exit()
+        if int(kwargs["cores"]) > 1:
+            commands = [get_blast_call_string(file, kwargs["input_db_name"]) for file in kwargs["query"]]
+            pool = dummyPool(int(kwargs["cores"]))
+            try:
+                pool.map(call_blast, commands)
+            except KeyboardInterrupt:
+                pool.close()
+                pool.terminate()
+                print("\nYou killed the query")
+                sys.exit()
 
-	if db_creator.command == "parse":
-	    for file_name in kwargs["xml_files"]:
-	        output_parsed(file_name)
+    if db_creator.command == "parse":
+        for file_name in kwargs["xml_files"]:
+            output_parsed(file_name)
 
 def run():
 
