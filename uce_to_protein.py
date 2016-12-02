@@ -21,7 +21,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import argparse, re, subprocess, sys
+import argparse, re, sqlite3, subprocess, sys
 from collections import defaultdict
 from multiprocessing.dummy import Pool as dummyPool
 from Bio.Blast import NCBIXML
@@ -173,27 +173,23 @@ def get_frames(alignment):
     """ get frames from all matches in alignment """
     return [str(hsp.frame) for hsp in alignment.hsps]
 
-def get_strands(alignment):
-    """ get strands from all matches in alignment """
-    return [str(hsp.strand) for hsp in alignment.hsps]
-
 def get_query_starts(alignment):
     """ get query starts from all matches in alignment """
     return [str(hsp.query_start) for hsp in alignment.hsps]
 
 def add_to_highest_scoring_dict(dictionary, key, alignment, check_length="no", query_length=0):
     """ assign items to dictionary of highest scoring hits """
+    subject_gene_name = alignment.title
     query = get_query_string(alignment)
     subject = get_subject_string(alignment)
     bits = get_bits_string(alignment)
     frames = get_frames(alignment)
-    strands = get_strands(alignment)
     query_starts = get_query_starts(alignment)
     if check_length == "yes":
             if len(query) >= 30 and len(query) <= query_length / 3:
-                dictionary[key] = (query, subject, bits, frames, strands, query_starts)
+                dictionary[key] = (query, subject, bits, frames, query_starts, subject_gene_name)
     elif check_length == "no":
-        dictionary[key] = (query, subject, bits, frames, strands, query_starts)
+        dictionary[key] = (query, subject, bits, frames, query_starts, subject_gene_name)
 
 def get_highest_scoring(records):
     """ get a dictionary of { species : 'best' hit } from parsed BLASTX output """
@@ -238,16 +234,6 @@ def get_highest_scoring(records):
     except ExpatError:
         print("Unexpected end of xml file...")
 
-    for species, record in highest_scoring_dict.items():
-        query = record[0]
-        subject = record[1]
-        bits = record[2]
-        frames = record[3]
-        strands = record[4]
-        query_s = record[5]
-
-        print('Species: {}\n\nQuery: {}\nSubject: {}\nFrames: {}\nStrands: {}\nQuery start: {}\n'.format(species, query, subject, frames, strands, query_s))
-
     return highest_scoring_dict
 
 def trim_introns_and_seqs_w_stop(highest_scoring_dict):    
@@ -259,6 +245,11 @@ def trim_introns_and_seqs_w_stop(highest_scoring_dict):
     for species, seqs in highest_scoring_dict.items():
         query = seqs[0]
         subject = seqs[1]
+        bits = seqs[2]
+        frames = seqs[3]
+        query_s = seqs[4]
+        gene = seqs[5]
+
         trimm = []
         if find_intron(seqs[1]):
             introns = list(find_intron(seqs[1]))
@@ -292,12 +283,33 @@ def trim_introns_and_seqs_w_stop(highest_scoring_dict):
         trimmed = "".join(trimm)
         
         if "*" not in trimmed:
+        # exclude sequences that still have stop codon
             trimmed_no_stop = trimmed
-            trimmed_seq_dict[species] = trimmed_no_stop # exclude sequences that still have stop codons
+            trimmed_seq_dict[species] = (trimmed_no_stop, query, subject, bits, frames, query_s, gene)
 
-            #print("{}:\nQuery: {}\nSubject: {}\nTrimmed: {}\n".format(species, query, subject, trimmed_no_stop))
+
+        print('Species: {}\nGene: {}\nQuery: {}\nTrimmed: {}\nSubject: {}\nFrames: {}\nQuery start: {}\n'.format(species, gene, query, trimmed, subject, frames, query_s))
 
     return trimmed_seq_dict
+
+def create_sqlite_db(trimmed_seq_dict):
+    """ add data from highest scoring dictionary to sqlite database """
+    conn = sqlite3.connect("test.db")
+
+    with conn:
+        cur = conn.cursor()
+        cur.execute("DROP TABLE IF EXISTS Hits")
+        cur.execute("CREATE TABLE {tn} (Id INT, {sp} TEXT, {gn} TEXT, {tq} TEXT, {uq} TEXT, {sb} TEXT)".format(
+         tn="Hits", sp="species", gn="matched_gene",
+         tq="trimmed_query", uq="untrimmed_query", sb="subject"))    
+
+        index = 0
+        for species, seq in trimmed_seq_dict.items():
+            (trimmed_query, untrimmed_query, subject, bits, frames, query_s, gene) = seq
+
+            cur.execute("""INSERT INTO Hits (Id, species, matched_gene, trimmed_query, untrimmed_query, subject) 
+                VALUES (?, ?, ?, ?, ?, ?);""", (index, species, gene, trimmed_query, untrimmed_query, subject))
+            index += 1
 
 def output_fasta(trimmed_seq_dict, n=80):
     """ produce a FASTA string from dictionary of best hits """
@@ -305,8 +317,9 @@ def output_fasta(trimmed_seq_dict, n=80):
     # for each element of species : seq dictionary,
     # split sequence into list of string, each n chars long
     # then join everything with newline 
-    fasta_string = '\n'.join(['>{}\n{}'.format(species, '\n'.join([seq[i:i+n] for i in range(0, len(seq), n)])) \
+    fasta_string = '\n'.join(['>{}\n{}'.format(species, '\n'.join([seq[0][i:i+n] for i in range(0, len(seq[0]), n)])) \
      for species, seq in sorted(trimmed_seq_dict.items())])
+    create_sqlite_db(trimmed_seq_dict)
     return fasta_string
 
 def write_fasta(in_file_name, fasta_string):
