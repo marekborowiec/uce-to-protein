@@ -243,12 +243,7 @@ def trim_introns_and_seqs_w_stop(highest_scoring_dict):
     trimmed_seq_dict = {}
 
     for species, seqs in highest_scoring_dict.items():
-        query = seqs[0]
-        subject = seqs[1]
-        bits = seqs[2]
-        frames = seqs[3]
-        query_s = seqs[4]
-        gene = seqs[5]
+        (query, subject, bits, frames, query_s, gene) = seqs
 
         trimm = []
         if find_intron(seqs[1]):
@@ -288,28 +283,52 @@ def trim_introns_and_seqs_w_stop(highest_scoring_dict):
             trimmed_seq_dict[species] = (trimmed_no_stop, query, subject, bits, frames, query_s, gene)
 
 
-        print('Species: {}\nGene: {}\nQuery: {}\nTrimmed: {}\nSubject: {}\nFrames: {}\nQuery start: {}\n'.format(species, gene, query, trimmed, subject, frames, query_s))
+        print('Species: {}\nGene: {}\nQuery: {}\nTrimmed: {}\nSubject: {}\nFrames: {}\nQuery start: {}\n'.format(
+            species, gene, query, trimmed, subject, frames, query_s))
 
     return trimmed_seq_dict
 
-def create_sqlite_db(trimmed_seq_dict):
+def create_sqlite_db():
+    """ create sqlite database """
+    conn = sqlite3.connect("test.db")
+
+    with conn:
+        cur = conn.cursor()
+        cur.execute("DROP TABLE IF EXISTS Filename")        
+        cur.execute("DROP TABLE IF EXISTS InputSequence")
+        cur.execute("DROP TABLE IF EXISTS Hitname")
+        cur.execute("DROP TABLE IF EXISTS Sequences")
+
+        cur.execute("CREATE TABLE {tn} ({fid} INTEGER PRIMARY KEY, {fn} UNIQUE)".format(
+         tn="Filename", fid="file_name_ID", fn="file_name"))
+
+        cur.execute("""CREATE TABLE {tn} ({sid} INTEGER PRIMARY KEY, {fid} TEXT, {txn} TEXT,
+         FOREIGN KEY({fid}) REFERENCES Filename({fid}))""".format(
+         tn="InputSequence", sid="input_seq_ID", fid="file_ID", txn="tax_name"))
+
+        cur.execute("""CREATE TABLE {tn} ({hid} INTEGER PRIMARY KEY, {hn} TEXT,
+         FOREIGN KEY({hid}) REFERENCES InputSequence({sid}))""".format(
+         tn="Hitname", hid="hit_ID", sid="input_seq_ID", hn="hit_name"))
+
+        cur.execute("""CREATE TABLE {tn} ({sid} INTEGER PRIMARY KEY, {tq} TEXT, {q} TEXT, {s} TEXT,
+         FOREIGN KEY({sid}) REFERENCES Hitname({hid}))""".format(
+         tn="Sequences", sid="seq_ID", hid="hit_ID", tq="trimmed_query", q="query", s="subject"))
+
+def populate_sqlite_db(file_name, seq_dict):
     """ add data from highest scoring dictionary to sqlite database """
     conn = sqlite3.connect("test.db")
 
     with conn:
         cur = conn.cursor()
-        cur.execute("DROP TABLE IF EXISTS Hits")
-        cur.execute("CREATE TABLE {tn} (Id INT, {sp} TEXT, {gn} TEXT, {tq} TEXT, {uq} TEXT, {sb} TEXT)".format(
-         tn="Hits", sp="species", gn="matched_gene",
-         tq="trimmed_query", uq="untrimmed_query", sb="subject"))    
-
-        index = 0
-        for species, seq in trimmed_seq_dict.items():
-            (trimmed_query, untrimmed_query, subject, bits, frames, query_s, gene) = seq
-
-            cur.execute("""INSERT INTO Hits (Id, species, matched_gene, trimmed_query, untrimmed_query, subject) 
-                VALUES (?, ?, ?, ?, ?, ?);""", (index, species, gene, trimmed_query, untrimmed_query, subject))
-            index += 1
+        cur.execute("INSERT INTO Filename(file_name) VALUES (?)", (file_name, ))
+        file_ID = cur.lastrowid
+        for species, seq in seq_dict.items():
+            (trimmed_query, query, subject, bits, frames, query_s, gene) = seq
+            cur.execute("INSERT INTO InputSequence(file_ID, tax_name) VALUES (?, ?)", (file_ID, species))
+            cur.execute("INSERT INTO Hitname(hit_name) VALUES (?)", (gene, ))
+            hit_ID = cur.lastrowid
+            cur.execute("INSERT INTO Sequences(seq_ID, trimmed_query, query, subject) VALUES (?, ?, ?, ?)", 
+             (hit_ID, trimmed_query, query, subject))
 
 def output_fasta(trimmed_seq_dict, n=80):
     """ produce a FASTA string from dictionary of best hits """
@@ -319,7 +338,6 @@ def output_fasta(trimmed_seq_dict, n=80):
     # then join everything with newline 
     fasta_string = '\n'.join(['>{}\n{}'.format(species, '\n'.join([seq[0][i:i+n] for i in range(0, len(seq[0]), n)])) \
      for species, seq in sorted(trimmed_seq_dict.items())])
-    create_sqlite_db(trimmed_seq_dict)
     return fasta_string
 
 def write_fasta(in_file_name, fasta_string):
@@ -344,6 +362,7 @@ def output_parsed(file_name):
     if fasta_string:
         print("Writing FASTA file protein-{}...".format(new_output_name))
         write_fasta(file_name, fasta_string)
+        populate_sqlite_db(file_name, trimmed_seq_dict)
     else:
         print("File {} contains no protein matches".format(file_name))
 
@@ -393,6 +412,7 @@ def main():
                 sys.exit()
 
     if db_creator.command == "parse":
+        create_sqlite_db()
         for file_name in kwargs["xml_files"]:
             output_parsed(file_name)
 
