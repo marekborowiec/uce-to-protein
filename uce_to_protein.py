@@ -182,14 +182,17 @@ def add_to_highest_scoring_dict(dictionary, key, alignment, check_length="no", q
     subject_gene_name = alignment.title
     query = get_query_string(alignment)
     subject = get_subject_string(alignment)
+    trimmed_query = trim_introns_and_seqs_w_stop(query, subject)
     bits = get_bits_string(alignment)
     frames = get_frames(alignment)
     query_starts = get_query_starts(alignment)
-    if check_length == "yes":
+    if trimmed_query:
+        if check_length == "no":
+            dictionary[key] = (trimmed_query, query, subject, bits, frames, query_starts, subject_gene_name)
+        elif check_length == "yes":
             if len(query) >= 30 and len(query) <= query_length / 3:
-                dictionary[key] = (query, subject, bits, frames, query_starts, subject_gene_name)
-    elif check_length == "no":
-        dictionary[key] = (query, subject, bits, frames, query_starts, subject_gene_name)
+                dictionary[key] = (trimmed_query, query, subject, bits, frames, query_starts, subject_gene_name)
+            
 
 def get_highest_scoring(records):
     """ get a dictionary of { species : 'best' hit } from parsed BLASTX output """
@@ -236,57 +239,46 @@ def get_highest_scoring(records):
 
     return highest_scoring_dict
 
-def trim_introns_and_seqs_w_stop(highest_scoring_dict):    
-    """ given highest scoring hits dictrionary, trim bases 
-    that correspond to long gaps in subject (likely introns)
-    and delete remaining sequences that still have stop codons """
-    trimmed_seq_dict = {}
-
-    for species, seqs in highest_scoring_dict.items():
-        (query, subject, bits, frames, query_s, gene) = seqs
-
+def trim_introns_and_seqs_w_stop(query, subject):    
+    """ given highest scoring concatenated query and subject,
+    trim bases that correspond to long gaps in subject (likely introns)
+    and delete sequences that still have stop codons """
+    if find_intron(subject):
         trimm = []
-        if find_intron(seqs[1]):
-            introns = list(find_intron(seqs[1]))
-            if len(introns) == 1:
-                intron_start = introns[0][0]
-                intron_end = introns[0][1]
-                trimm.append(query[:intron_start])
-                trimm.append(query[intron_end:])
-            elif len(introns) == 2:
-                intron1_start = introns[0][0]
-                intron1_end = introns[0][1]
-                intron2_start = introns[1][0]
-                intron2_end = introns[1][1]
-                trimm.append(query[:intron1_start])
-                trimm.append(query[intron1_end:intron2_start])
-                trimm.append(query[intron2_end:])
-            elif len(introns) > 2:
-                for index, intron in enumerate(introns[:-1]):
-                    if index == 0:
-                        intron1_start = intron[0]
-                        trimm.append(query[:intron1_start]) # first exon
-                    if index > 0:
-                        current_intron_end = intron[1]
-                        next_intron_start = introns[index+1][0]
-                        trimm.append(query[current_intron_end:next_intron_start]) # intermediate exons
-                last_intron_end = introns[-1][1]
-                trimm.append(query[last_intron_end:]) # last exon
-        else:
-            trimm.append(query)
+        introns = list(find_intron(subject))
+        if len(introns) == 1:
+            intron_start = introns[0][0]
+            intron_end = introns[0][1]
+            trimm.append(query[:intron_start])
+            trimm.append(query[intron_end:])
+        elif len(introns) == 2:
+            intron1_start = introns[0][0]
+            intron1_end = introns[0][1]
+            intron2_start = introns[1][0]
+            intron2_end = introns[1][1]
+            trimm.append(query[:intron1_start])
+            trimm.append(query[intron1_end:intron2_start])
+            trimm.append(query[intron2_end:])
+        elif len(introns) > 2:
+            for index, intron in enumerate(introns[:-1]):
+                if index == 0:
+                    intron1_start = intron[0]
+                    trimm.append(query[:intron1_start]) # first exon
+                if index > 0:
+                    current_intron_end = intron[1]
+                    next_intron_start = introns[index+1][0]
+                    trimm.append(query[current_intron_end:next_intron_start]) # intermediate exons
+            last_intron_end = introns[-1][1]
+            trimm.append(query[last_intron_end:]) # last exon
 
         trimmed = "".join(trimm)
         
         if "*" not in trimmed:
         # exclude sequences that still have stop codon
-            trimmed_no_stop = trimmed
-            trimmed_seq_dict[species] = (trimmed_no_stop, query, subject, bits, frames, query_s, gene)
+            return trimmed
 
-
-        print('Species: {}\nGene: {}\nQuery: {}\nTrimmed: {}\nSubject: {}\nFrames: {}\nQuery start: {}\n'.format(
-            species, gene, query, trimmed, subject, frames, query_s))
-
-    return trimmed_seq_dict
+        #print('Species: {}\nGene: {}\nQuery: {}\nTrimmed: {}\nSubject: {}\nFrames: {}\nQuery start: {}\n'.format(
+        #    species, gene, query, trimmed, subject, frames, query_s))
 
 def create_sqlite_db():
     """ create sqlite database """
@@ -294,25 +286,28 @@ def create_sqlite_db():
 
     with conn:
         cur = conn.cursor()
-        cur.execute("DROP TABLE IF EXISTS Filename")        
-        cur.execute("DROP TABLE IF EXISTS InputSequence")
-        cur.execute("DROP TABLE IF EXISTS Hitname")
+        cur.execute("DROP TABLE IF EXISTS Filenames")        
+        cur.execute("DROP TABLE IF EXISTS Taxa")
+        cur.execute("DROP TABLE IF EXISTS Hitnames")
         cur.execute("DROP TABLE IF EXISTS Sequences")
 
         cur.execute("CREATE TABLE {tn} ({fid} INTEGER PRIMARY KEY, {fn} UNIQUE)".format(
-         tn="Filename", fid="file_name_ID", fn="file_name"))
+         tn="Filenames", fid="file_name_ID", fn="file_name"))
 
-        cur.execute("""CREATE TABLE {tn} ({sid} INTEGER PRIMARY KEY, {fid} TEXT, {txn} TEXT,
-         FOREIGN KEY({fid}) REFERENCES Filename({fid}))""".format(
-         tn="InputSequence", sid="input_seq_ID", fid="file_ID", txn="tax_name"))
+        cur.execute("CREATE TABLE {tn} ({tid} INTEGER PRIMARY KEY, {txn} UNIQUE)".format(
+         tn="Taxa", tid="taxon_name_ID", txn="taxon_name"))
 
-        cur.execute("""CREATE TABLE {tn} ({hid} INTEGER PRIMARY KEY, {hn} TEXT,
-         FOREIGN KEY({hid}) REFERENCES InputSequence({sid}))""".format(
-         tn="Hitname", hid="hit_ID", sid="input_seq_ID", hn="hit_name"))
+        cur.execute("CREATE TABLE {tn} ({tid} INTEGER PRIMARY KEY, {txn} UNIQUE)".format(
+         tn="Hitnames", tid="hit_name_ID", txn="hit_name"))
 
-        cur.execute("""CREATE TABLE {tn} ({sid} INTEGER PRIMARY KEY, {tq} TEXT, {q} TEXT, {s} TEXT,
-         FOREIGN KEY({sid}) REFERENCES Hitname({hid}))""".format(
-         tn="Sequences", sid="seq_ID", hid="hit_ID", tq="trimmed_query", q="query", s="subject"))
+        cur.execute("""CREATE TABLE {tn} ({sid} INTEGER PRIMARY KEY, {fid} INT, {tid} INT, {hid} INT, {tq} TEXT, {q} TEXT, {s} TEXT,
+         FOREIGN KEY({fid}) REFERENCES Filenames({fid}),
+         FOREIGN KEY({tid}) REFERENCES Taxa({tid}),
+         FOREIGN KEY({hid}) REFERENCES Hitnames({hid}))
+         """.format(
+         tn="Sequences", sid="seq_ID", fid="file_name_ID",
+         tid="taxon_name_ID", hid="hit_name_ID",
+         tq="trimmed_query", q="query", s="subject"))
 
 def populate_sqlite_db(file_name, seq_dict):
     """ add data from highest scoring dictionary to sqlite database """
@@ -320,24 +315,32 @@ def populate_sqlite_db(file_name, seq_dict):
 
     with conn:
         cur = conn.cursor()
-        cur.execute("INSERT INTO Filename(file_name) VALUES (?)", (file_name, ))
-        file_ID = cur.lastrowid
+        cur.execute("INSERT OR IGNORE INTO Filenames(file_name) VALUES (?)", (file_name, ))
+        cur.execute("SELECT file_name_ID FROM Filenames WHERE file_name = '{fn}'".format(fn=file_name))
+        file_ID = int(cur.fetchone()[0])
+
         for species, seq in seq_dict.items():
             (trimmed_query, query, subject, bits, frames, query_s, gene) = seq
-            cur.execute("INSERT INTO InputSequence(file_ID, tax_name) VALUES (?, ?)", (file_ID, species))
-            cur.execute("INSERT INTO Hitname(hit_name) VALUES (?)", (gene, ))
-            hit_ID = cur.lastrowid
-            cur.execute("INSERT INTO Sequences(seq_ID, trimmed_query, query, subject) VALUES (?, ?, ?, ?)", 
-             (hit_ID, trimmed_query, query, subject))
 
-def output_fasta(trimmed_seq_dict, n=80):
+            cur.execute("INSERT OR IGNORE INTO Taxa(taxon_name) VALUES (?)", (species, ))
+            cur.execute("INSERT OR IGNORE INTO Hitnames(hit_name) VALUES (?)", (gene, ))
+
+            cur.execute("SELECT taxon_name_ID FROM Taxa WHERE taxon_name = '{tn}'".format(tn=species))
+            taxon_ID = int(cur.fetchone()[0])
+            cur.execute("SELECT hit_name_ID FROM Hitnames WHERE hit_name = '{hn}'".format(hn=gene))
+            hit_ID = int(cur.fetchone()[0])
+
+            cur.execute("INSERT INTO Sequences(file_name_ID, taxon_name_ID, hit_name_ID, trimmed_query, query, subject) VALUES (?, ?, ?, ?, ?, ?)", 
+             (file_ID, taxon_ID, hit_ID, trimmed_query, query, subject))
+
+def output_fasta(highest_scoring_dict, n=80):
     """ produce a FASTA string from dictionary of best hits """
     # each sequence line will have 80 characters 
     # for each element of species : seq dictionary,
     # split sequence into list of string, each n chars long
     # then join everything with newline 
     fasta_string = '\n'.join(['>{}\n{}'.format(species, '\n'.join([seq[0][i:i+n] for i in range(0, len(seq[0]), n)])) \
-     for species, seq in sorted(trimmed_seq_dict.items())])
+     for species, seq in sorted(highest_scoring_dict.items())])
     return fasta_string
 
 def write_fasta(in_file_name, fasta_string):
@@ -357,12 +360,11 @@ def output_parsed(file_name):
     """ write output of query command """
     new_output_name = re.sub(".xml", "", file_name)
     highest_scoring_dict = xml_parse(file_name)
-    trimmed_seq_dict = trim_introns_and_seqs_w_stop(highest_scoring_dict)
-    fasta_string = output_fasta(trimmed_seq_dict)
+    fasta_string = output_fasta(highest_scoring_dict)
     if fasta_string:
         print("Writing FASTA file protein-{}...".format(new_output_name))
         write_fasta(file_name, fasta_string)
-        populate_sqlite_db(file_name, trimmed_seq_dict)
+        populate_sqlite_db(file_name, highest_scoring_dict)
     else:
         print("File {} contains no protein matches".format(file_name))
 
