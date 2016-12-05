@@ -321,7 +321,7 @@ def populate_sqlite_db(file_name, seq_dict):
     with conn:
         cur = conn.cursor()
         cur.execute("INSERT OR IGNORE INTO Filenames(file_name) VALUES (?)", (file_name, ))
-        cur.execute("SELECT file_name_ID FROM Filenames WHERE file_name = '{fn}'".format(fn=file_name))
+        cur.execute("SELECT file_name_ID FROM Filenames WHERE file_name = ?", (file_name, ))
         file_ID = int(cur.fetchone()[0])
 
         for species, seq in seq_dict.items():
@@ -334,9 +334,9 @@ def populate_sqlite_db(file_name, seq_dict):
             cur.execute("INSERT OR IGNORE INTO Taxa(taxon_name) VALUES (?)", (species, ))
             cur.execute("INSERT OR IGNORE INTO Hitnames(hit_name) VALUES (?)", (gene, ))
 
-            cur.execute("SELECT taxon_name_ID FROM Taxa WHERE taxon_name = '{tn}'".format(tn=species))
+            cur.execute("SELECT taxon_name_ID FROM Taxa WHERE taxon_name = ?", (species, ))
             taxon_ID = int(cur.fetchone()[0])
-            cur.execute("SELECT hit_name_ID FROM Hitnames WHERE hit_name = '{hn}'".format(hn=gene))
+            cur.execute("SELECT hit_name_ID FROM Hitnames WHERE hit_name = ?", (gene, ))
             hit_ID = int(cur.fetchone()[0])
 
             cur.execute("INSERT INTO Sequences(file_name_ID, taxon_name_ID, hit_name_ID, trimmed_query, query, subject) VALUES (?, ?, ?, ?, ?, ?)", 
@@ -350,7 +350,8 @@ def output_fasta(highest_scoring_dict, n=80):
     # then join everything with newline 
     fasta_string = '\n'.join(['>{}\n{}'.format(species, '\n'.join([seq[0][i:i+n] for i in range(0, len(seq[0]), n)])) \
      for species, seq in sorted(highest_scoring_dict.items())])
-    return "{}\n".format(fasta_string) # add last end of line
+    if fasta_string:
+        return "{}\n".format(fasta_string) # add last end of line
 
 def write_fasta(in_file_name, fasta_string):
     """ write FASTA file """
