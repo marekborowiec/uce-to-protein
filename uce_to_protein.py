@@ -23,6 +23,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import argparse, re, sqlite3, subprocess, sys
 from collections import defaultdict
+from operator import itemgetter
 from multiprocessing.dummy import Pool as dummyPool
 from Bio.Blast import NCBIXML
 from xml.parsers.expat import ExpatError
@@ -153,45 +154,50 @@ def find_intron(string):
             spans.append(match.span())
         return spans
 
-def get_query_string(alignment):
-    """ get query string from all matches in alignment """
-    return ''.join([hsp.query for hsp in alignment.hsps])
-
-def get_match_string(alignment):
-    """ get match string from all matches in alignment """
-    return ''.join([hsp.match for hsp in alignment.hsps])
-
-def get_subject_string(alignment):
-    """ get subject string from all matches in alignment """
-    return ''.join([hsp.sbjct for hsp in alignment.hsps])
-
 def get_bits_string(alignment):
     """ get bits string from all matches in alignment """
     return ''.join([str(hsp.bits) for hsp in alignment.hsps])
 
 def get_frames(alignment):
     """ get frames from all matches in alignment """
-    return [str(hsp.frame) for hsp in alignment.hsps]
+    return [hsp.frame for hsp in alignment.hsps]
 
-def get_query_starts(alignment):
-    """ get query starts from all matches in alignment """
-    return [str(hsp.query_start) for hsp in alignment.hsps]
+def get_sorted_queries(sign, alignment):
+    """ get hsps queries and subject sorted by query start,
+    either ascending or descenging, depending on strand """
+    queries = [hsp.query for hsp in alignment.hsps]
+    subjects = [hsp.sbjct for hsp in alignment.hsps]
+    starts = [int(hsp.query_start) for hsp in alignment.hsps]
+    zipped = zip(queries, subjects, starts)
+    if sign == "plus":
+        sorted_zipped = sorted(zipped, key=itemgetter(2))
+    elif sign == "minus":
+        sorted_zipped = sorted(zipped, key=itemgetter(2), reverse=True)
+    sorted_queries, sorted_subjects, sorted_starts = zip(*sorted_zipped)
+
+    query_string = ''.join(sorted_queries)
+    subject_string = ''.join(sorted_subjects)
+
+    return (query_string, subject_string, sorted_starts)
 
 def add_to_highest_scoring_dict(dictionary, key, alignment, check_length="no", query_length=0):
     """ assign items to dictionary of highest scoring hits """
     subject_gene_name = alignment.title
-    query = get_query_string(alignment)
-    subject = get_subject_string(alignment)
-    trimmed_query = trim_introns_and_seqs_w_stop(query, subject)
     bits = get_bits_string(alignment)
     frames = get_frames(alignment)
-    query_starts = get_query_starts(alignment)
+    if frames[0][0] > 0: # checking sign of first frame 
+        sign = "plus"
+    elif frames[0][0] < 0:
+        sign = "minus"
+    query, subject, sorted_starts = get_sorted_queries(sign, alignment)
+    trimmed_query = trim_introns_and_seqs_w_stop(query, subject)
+
     if trimmed_query:
         if check_length == "no":
-            dictionary[key] = (trimmed_query, query, subject, bits, frames, query_starts, subject_gene_name)
+            dictionary[key] = (trimmed_query, query, subject, bits, frames, sorted_starts, subject_gene_name)
         elif check_length == "yes":
             if len(query) >= 30 and len(query) <= query_length / 3:
-                dictionary[key] = (trimmed_query, query, subject, bits, frames, query_starts, subject_gene_name)
+                dictionary[key] = (trimmed_query, query, subject, bits, frames, sorted_starts, subject_gene_name)
             
 
 def get_highest_scoring(records):
@@ -243,8 +249,8 @@ def trim_introns_and_seqs_w_stop(query, subject):
     """ given highest scoring concatenated query and subject,
     trim bases that correspond to long gaps in subject (likely introns)
     and delete sequences that still have stop codons """
+    trimm = []
     if find_intron(subject):
-        trimm = []
         introns = list(find_intron(subject))
         if len(introns) == 1:
             intron_start = introns[0][0]
@@ -270,15 +276,14 @@ def trim_introns_and_seqs_w_stop(query, subject):
                     trimm.append(query[current_intron_end:next_intron_start]) # intermediate exons
             last_intron_end = introns[-1][1]
             trimm.append(query[last_intron_end:]) # last exon
+    else:
+        trimm.append(query)
 
-        trimmed = "".join(trimm)
+    trimmed = "".join(trimm)
         
-        if "*" not in trimmed:
-        # exclude sequences that still have stop codon
-            return trimmed
-
-        #print('Species: {}\nGene: {}\nQuery: {}\nTrimmed: {}\nSubject: {}\nFrames: {}\nQuery start: {}\n'.format(
-        #    species, gene, query, trimmed, subject, frames, query_s))
+    if "*" not in trimmed:
+    # exclude sequences that still have stop codon
+        return trimmed
 
 def create_sqlite_db():
     """ create sqlite database """
@@ -322,6 +327,10 @@ def populate_sqlite_db(file_name, seq_dict):
         for species, seq in seq_dict.items():
             (trimmed_query, query, subject, bits, frames, query_s, gene) = seq
 
+
+            #print('File: {}\nSpecies: {}\nGene: {}\nQuery: {}\nTrimmed: {}\nSubject: {}\nFrames: {}\nQuery start: {}\n'.format(
+            # file_name, species, gene, query, trimmed_query, subject, frames, query_s))
+
             cur.execute("INSERT OR IGNORE INTO Taxa(taxon_name) VALUES (?)", (species, ))
             cur.execute("INSERT OR IGNORE INTO Hitnames(hit_name) VALUES (?)", (gene, ))
 
@@ -341,7 +350,7 @@ def output_fasta(highest_scoring_dict, n=80):
     # then join everything with newline 
     fasta_string = '\n'.join(['>{}\n{}'.format(species, '\n'.join([seq[0][i:i+n] for i in range(0, len(seq[0]), n)])) \
      for species, seq in sorted(highest_scoring_dict.items())])
-    return fasta_string
+    return "{}\n".format(fasta_string) # add last end of line
 
 def write_fasta(in_file_name, fasta_string):
     """ write FASTA file """
