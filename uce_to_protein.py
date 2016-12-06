@@ -468,7 +468,6 @@ def populate_sqlite_db(fasta_file_name, blast_file_name, db_name):
     if highest_scoring_dict:
         print("Got best hit for {}...".format(base_uce_name))
         add_to_sqlite_db(base_uce_name, highest_scoring_dict, db_name)
-        print("Wrote results to {} database".format(db_name))
     else:
         print("Locus {} contains no protein matches".format(base_uce_name))
     
@@ -611,10 +610,12 @@ def main():
 
         if not os.path.isfile(db_name):
             create_sqlite_db(db_name)
- 
+
         for pair in fasta_xml_pairs:
             (fasta_fn, blast_fn) = pair 
             populate_sqlite_db(fasta_fn, blast_fn, db_name)
+            
+        print("Wrote results to {} database".format(db_name))
 
     if arg_creator.command == "queryprot":
         db_name = kwargs["best_hits_db"]
