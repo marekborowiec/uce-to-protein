@@ -468,10 +468,10 @@ def populate_sqlite_db(fasta_file_name, blast_file_name, db_name):
     if highest_scoring_dict:
         print("Got best hit for {}...".format(base_uce_name))
         add_to_sqlite_db(base_uce_name, highest_scoring_dict, db_name)
+        print("Wrote results to {} database".format(db_name))
     else:
         print("Locus {} contains no protein matches".format(base_uce_name))
-    print("Wrote results to {} database".format(db_name))
-
+    
 def get_blast_call_string(in_file, db_name, e_value, other_args):
     """ make command line call string for BLASTX """
     call_string = "blastx -query {0} -db {1} -outfmt 5 -evalue {2} {3} > {0}.xml".format(in_file, db_name, e_value, other_args)
