@@ -21,7 +21,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import argparse, re, sqlite3, subprocess, sys
+import argparse, re, sqlite3, subprocess, os.path, sys
 from collections import defaultdict
 from operator import itemgetter
 from multiprocessing.dummy import Pool as dummyPool
@@ -39,9 +39,10 @@ class ParsedArgs:
         parser = argparse.ArgumentParser(
             usage='''uce_to_protein <command> [<args>]
 The commands are:
-  db      Create BLAST database
-  query   Query existing database
-  parse   Print out formatted output of xml BLASTX output
+  blastdb        Create BLAST database
+  queryblast     Query existing BLAST database and output BLASTX xml
+  parse          Parse BLASTX xml output and create or update database of best hits
+  queryprot      Query existing database of best hits
 Use uce_to_protein <command> -h for help with arguments of the command of interest
 '''
         )
@@ -61,7 +62,7 @@ Use uce_to_protein <command> -h for help with arguments of the command of intere
         # use dispatch pattern to invoke method with same name
         getattr(self, self.args.command)()
 
-    def db(self):
+    def blastdb(self):
         """ command that wraps BLAST for creating protein database """
         parser = argparse.ArgumentParser(
             description="Create a BLAST database",
@@ -79,11 +80,19 @@ Use uce_to_protein <command> -h for help with arguments of the command of intere
             default = "prot_db",
             help = "File name for BLAST database created from reference sequences. Default: 'prot_db'"
         )
+        parser.add_argument(
+            "-a",
+            "--other-args",
+            dest = "other_args",
+            default = "",
+            type=str,
+            help = "A string of any additional commands to makeblastdb. Must be in quotes. Example: --other-args '-logfile blast-db.log'"
+        )
 
         args = parser.parse_args(sys.argv[2:])
         return args
 
-    def query(self):
+    def queryblast(self):
         """ command that wraps BLAST to query UCE alignment against protein database """
         parser = argparse.ArgumentParser(
             description="Query existing protein database with unaligned UCE sequences",
@@ -105,12 +114,27 @@ Use uce_to_protein <command> -h for help with arguments of the command of intere
             help = "File name for BLAST database created from reference sequences. Default: 'prot_db'"
         )
         parser.add_argument(
+            "-e",
+            "--e-value",
+            dest = "e_value",
+            default = "10e-5",
+            help = "E-value cutoff for BLAST hits to be retained. Default: '10e-5'"
+        )
+        parser.add_argument(
         # parallelization can be used for BLAST
             "-c",
             "--cores",
             dest = "cores",
             default = 1,
-            help = "Number of cores used. Default: 1"
+            help = "Number of cores used for parallel BLASTX searches. Default: 1"
+        )
+        parser.add_argument(
+            "-a",
+            "--other-args",
+            dest = "other_args",
+            type=str,
+            default = "",
+            help = "A string of any additional commands to blastx. Must be quotes. Example: --other-args '-seg no'"
         )
 
         args = parser.parse_args(sys.argv[2:])
@@ -138,6 +162,13 @@ Use uce_to_protein <command> -h for help with arguments of the command of intere
             required = True,
             dest = "fasta_files",
             help = "Input filenames with unaligned FASTA sequences"
+        )
+        parser.add_argument(
+            "-o",
+            "--output",
+            dest = "best_hits",
+            default = "best_hits.sqlite",
+            help = "File name for best hits database created from BLASTX xml files. Default: 'best_hits.sqlite'"
         )
 
         args = parser.parse_args(sys.argv[2:])
@@ -339,16 +370,16 @@ def trim_introns_and_seqs_w_stop(nt_query, query, subject):
     # exclude sequences that still have stop codon
         return (trimmed_nt, trimmed_aa)
 
-def create_sqlite_db():
+def create_sqlite_db(db_name):
     """ create sqlite database """
-    conn = sqlite3.connect("test.db")
+    conn = sqlite3.connect(db_name)
 
     with conn:
         cur = conn.cursor()
-        cur.execute("DROP TABLE IF EXISTS Uces")        
-        cur.execute("DROP TABLE IF EXISTS Taxa")
-        cur.execute("DROP TABLE IF EXISTS Hitnames")
-        cur.execute("DROP TABLE IF EXISTS Sequences")
+        #cur.execute("DROP TABLE IF EXISTS Uces")        
+        #cur.execute("DROP TABLE IF EXISTS Taxa")
+        #cur.execute("DROP TABLE IF EXISTS Hitnames")
+        #cur.execute("DROP TABLE IF EXISTS Sequences")
 
         cur.execute("CREATE TABLE {tn} ({uid} INTEGER PRIMARY KEY, {un} UNIQUE)".format(
          tn="Uces", uid="uce_name_ID", un="uce_name"))
@@ -359,18 +390,18 @@ def create_sqlite_db():
         cur.execute("CREATE TABLE {tn} ({tid} INTEGER PRIMARY KEY, {txn} UNIQUE)".format(
          tn="Hitnames", tid="hit_name_ID", txn="hit_name"))
 
-        cur.execute("""CREATE TABLE {tn} ({sid} INTEGER PRIMARY KEY, {uid} INT, {tid} INT, {hid} INT, {tq} TEXT, {q} TEXT, {s} TEXT,
+        cur.execute("""CREATE TABLE {tn} ({sid} INTEGER PRIMARY KEY, {uid} INT, {tid} INT, {hid} INT, {tnq} TEXT, {tpq} TEXT, {upq} TEXT, {s} TEXT,
          FOREIGN KEY({uid}) REFERENCES Uces({uid}),
          FOREIGN KEY({tid}) REFERENCES Taxa({tid}),
          FOREIGN KEY({hid}) REFERENCES Hitnames({hid}))
          """.format(
          tn="Sequences", sid="seq_ID", uid="uce_name_ID",
          tid="taxon_name_ID", hid="hit_name_ID",
-         tq="trimmed_query", q="query", s="subject"))
+         tnq="trimmed_nuc_query", tpq="trimmed_prot_query", upq="untrimmed_prot_query", s="subject"))
 
-def populate_sqlite_db(uce_name, seq_dict):
+def add_to_sqlite_db(uce_name, seq_dict, db_name):
     """ add data from highest scoring dictionary to sqlite database """
-    conn = sqlite3.connect("test.db")
+    conn = sqlite3.connect(db_name)
 
     with conn:
         cur = conn.cursor()
@@ -379,7 +410,7 @@ def populate_sqlite_db(uce_name, seq_dict):
         uce_ID = int(cur.fetchone()[0])
 
         for species, seq in seq_dict.items():
-            (nt_trimmed_query, trimmed_query, query, subject, bits, frames, query_s, query_e, gene) = seq
+            (trimmed_nuc_query, trimmed_prot_query, untrimmed_prot_query, subject, bits, frames, query_s, query_e, gene) = seq
 
 
             #print('File: {}\nSpecies: {}\nGene: {}\nNucleotides: {}\nQuery: {}\nTrimmed: {}\nSubject: {}\nFrames: {}\nQuery start: {}\nQuery end: {}'.format(
@@ -393,8 +424,10 @@ def populate_sqlite_db(uce_name, seq_dict):
             cur.execute("SELECT hit_name_ID FROM Hitnames WHERE hit_name = ?", (gene, ))
             hit_ID = int(cur.fetchone()[0])
 
-            cur.execute("INSERT INTO Sequences(uce_name_ID, taxon_name_ID, hit_name_ID, trimmed_query, query, subject) VALUES (?, ?, ?, ?, ?, ?)", 
-             (uce_ID, taxon_ID, hit_ID, trimmed_query, query, subject))
+            cur.execute("""INSERT INTO 
+             Sequences(uce_name_ID, taxon_name_ID, hit_name_ID, trimmed_nuc_query, trimmed_prot_query, untrimmed_prot_query, subject) 
+             VALUES (?, ?, ?, ?, ?, ?, ?)""", 
+             (uce_ID, taxon_ID, hit_ID, trimmed_nuc_query, trimmed_prot_query, untrimmed_prot_query, subject))
 
 def output_fasta(highest_scoring_dict, n=80):
     """ produce a FASTA string from dictionary of best hits """
@@ -421,14 +454,10 @@ def input_parse(xml_file_name, nt_file_name):
         nucleotide = SeqIO.parse(nt, "fasta")
         return get_highest_scoring(records, nucleotide)
 
-def common_entries(*dcts):
-    """ from StackOverflow """
-    for i in set(dcts[0]).intersection(*dcts[1:]):
-        yield (i,) + tuple(d[i] for d in dcts)
-
-def output_parsed(blast_file_name, fasta_file_name):
+def output_parsed(blast_file_name, fasta_file_name, db_name):
     """ write output of query command """
-    base_uce_name = fasta_file_name.split(".")[0] # move this somewhere else
+    base_uce_name = fasta_file_name.split(".")[0]
+
     new_output_name = "{}.unaligned.fasta".format(base_uce_name)
     highest_scoring_dict = input_parse(blast_file_name, fasta_file_name)
 
@@ -440,9 +469,23 @@ def output_parsed(blast_file_name, fasta_file_name):
     else:
         print("File {} contains no protein matches".format(blast_file_name))
 
-def get_blast_call_string(in_file, db_name):
+def populate_sqlite_db(blast_file_name, fasta_file_name, db_name):
+    """ write output of query command """
+    base_uce_name = fasta_file_name.split(".")[0]
+    base_uce_name_xml = blast_file_name.split(".")[0]
+    if base_uce_name != base_uce_name_xml:
+        print("WARNING: Locus names of your files {} and {} do no match.\nAre you sure you are comparing the right files?".format(
+            blast_file_name, fasta_file_name))
+    highest_scoring_dict = input_parse(blast_file_name, fasta_file_name)
+    if highest_scoring_dict:
+        print("Getting best hit for {}...".format(base_uce_name))
+        add_to_sqlite_db(base_uce_name, highest_scoring_dict, db_name)
+    else:
+        print("Locus {} contains no protein matches".format(base_uce_name))
+
+def get_blast_call_string(in_file, db_name, e_value, other_args):
     """ make command line call string for BLASTX """
-    call_string = "blastx -query {0} -db {1} -outfmt 5 -evalue 10e-5 > {0}.xml".format(in_file, db_name)
+    call_string = "blastx -query {0} -db {1} -outfmt 5 -evalue {2} {3} > {0}.xml".format(in_file, db_name, e_value, other_args)
     return call_string
 
 def call_blast(call_string):
@@ -464,18 +507,21 @@ def main():
     kwargs = run()
     db_creator = DbCreator(**kwargs)
        
-    if db_creator.command == "db":
-        call_string = "makeblastdb -in {} -dbtype prot -out {}".format(kwargs["prot_input"], kwargs["output_db_name"])
+    if db_creator.command == "blastdb":
+        call_string = "makeblastdb -in {} -dbtype prot -out {} {}".format(
+         kwargs["prot_input"], kwargs["output_db_name"], kwargs["other_args"])
         subprocess.call(call_string, shell=True)
 
-    if db_creator.command == "query":
+    if db_creator.command == "queryblast":
         if int(kwargs["cores"]) == 1:
             for file in kwargs["query"]:
-                blast_command = get_blast_call_string(file, kwargs["input_db_name"])
+                blast_command = get_blast_call_string(
+                 file, kwargs["input_db_name"], kwargs["e_value"], kwargs["other_args"])
                 call_blast(blast_command)
 
         if int(kwargs["cores"]) > 1:
-            commands = [get_blast_call_string(file, kwargs["input_db_name"]) for file in kwargs["query"]]
+            commands = [get_blast_call_string(
+             file, kwargs["input_db_name"], kwargs["e_value"], kwargs["other_args"]) for file in kwargs["query"]]
             pool = dummyPool(int(kwargs["cores"]))
             try:
                 pool.map(call_blast, commands)
@@ -486,11 +532,13 @@ def main():
                 sys.exit()
 
     if db_creator.command == "parse":
-        create_sqlite_db()
+        db_name = kwargs["best_hits"]
+        if not os.path.isfile(db_name):
+            create_sqlite_db(db_name)
         blast_fasta_pairs = zip(kwargs["xml_files"], kwargs["fasta_files"]) 
         for pair in blast_fasta_pairs:
             (blast_fn, fasta_fn) = pair 
-            output_parsed(blast_fn, fasta_fn)
+            populate_sqlite_db(blast_fn, fasta_fn, db_name)
 
 def run():
 
