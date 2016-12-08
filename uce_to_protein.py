@@ -208,14 +208,14 @@ Use uce_to_protein <command> -h for help with arguments of the command of intere
         arguments = getattr(self, self.args.command)().__dict__
         argument_dictionary = command.copy()
         argument_dictionary.update(arguments)
-        
+
         return argument_dictionary
 
 class ArgCreator():
     """ arguments class """
     def __init__(self, **kwargs):
         self.command = kwargs.get("command")
-        
+
 def find_intron(string):
     """ find long gaps in string """
     matches = re.finditer("-{4,}", string)
@@ -304,10 +304,10 @@ def add_to_highest_scoring_dict(highest_score_dict, nucleotides, key, alignment)
             (trimmed_nt_query, trimmed_query) = trimmed_queries
         except TypeError:
             trimmed_query = False
-        if trimmed_query:
+        if trimmed_query:    # in case trimmed query was excluded because it still had stop codons
                 highest_score_dict[key] = (trimmed_nt_query, trimmed_query, query, subject, 
                  frames, sorted_starts, sorted_ends, subject_gene_name)
-            
+
 def get_highest_scoring(records, nucleotide):
     """ get a dictionary of { species : 'best' hit } from parsed BLASTX output """
     nt_dict = {record.id : str(record.seq) for record in nucleotide} # { species : nt sequence } made from parsed FASTA file
@@ -340,11 +340,11 @@ def get_highest_scoring(records, nucleotide):
                         # if total score equals max score and is also best total score, take it
                         if total_alignment_score == max_alignment_score and total_alignment_score == max(total_species_scores):
                             add_to_highest_scoring_dict(highest_scoring_dict, nt, species, alignment)
-                        
+
                         # if total score > max score, check if this is the best total score
                         elif total_alignment_score > max_alignment_score and total_alignment_score == max(total_species_scores):
                             add_to_highest_scoring_dict(highest_scoring_dict, nt, species, alignment)
-                            
+
                         # if total score equals max score but is not the best total score, check if it is best max score, then take it
                         # else skip it
                         elif total_alignment_score == max_alignment_score and max_alignment_score == max(max_species_scores):
@@ -406,7 +406,7 @@ def trim_introns_and_seqs_w_stop(nt_query, query, subject):
 
     trimmed_nt = "".join(trimm_nt)
     trimmed_aa = "".join(trimm_aa)
-        
+
     if "*" not in trimmed_aa:  # exclude sequences that still have stop codon
         return (trimmed_nt, trimmed_aa)
 
@@ -487,7 +487,7 @@ def populate_sqlite_db(fasta_file_name, blast_file_name, db_name):
     else:
         print("Locus {} contains no protein matches".format(base_uce_name))
         sys.stdout.flush()
-    
+
 def get_blast_call_string(in_file, db_name, e_value, other_args):
     """ make command line call string for BLASTX """
     call_string = "blastx -query {0} -db {1} -outfmt 5 -evalue {2} {3} > {0}.xml".format(in_file, db_name, e_value, other_args)
@@ -624,6 +624,7 @@ def main():
                 pool.close()
                 pool.terminate()
                 print("\nYou killed the query")
+                sys.stdout.flush()
                 sys.exit()
 
         write_fasta_to_xml_config(**kwargs)   # write config file
@@ -632,7 +633,7 @@ def main():
         db_name = kwargs["best_hits"]
         fasta_xml_pairs = parse_fasta_to_xml_config(kwargs["fasta_to_xml_config"])
 
-        if not os.path.isfile(db_name):
+        if not os.path.isfile(db_name) or os.stat(db_name).st_size == 0:
             create_sqlite_db(db_name)
 
         for pair in fasta_xml_pairs:
@@ -657,5 +658,5 @@ def run():
     return config_dict
 
 if __name__ == '__main__':
-        
+
         main()
