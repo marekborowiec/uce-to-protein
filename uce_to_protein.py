@@ -24,15 +24,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 __version__ = "0.1"
 
 import argparse
+import configparser as cfgp
 import re
 import sqlite3
 import subprocess
 import os.path
 import sys
-import configparser as cfgp
 from collections import defaultdict
-from operator import itemgetter
 from multiprocessing.dummy import Pool as dummyPool
+from operator import itemgetter
 from xml.parsers.expat import ExpatError
 
 from Bio import SeqIO
@@ -141,8 +141,8 @@ Use uce_to_protein <command> -h for help with arguments of the command of intere
          dest = "other_args",
          type=str,
          default = "",
-         help = "A string of any additional commands to BLASTX. Must be quoted."
-          " Example: --other-args '-seg no'")
+         help = "A string of any additional commands to BLASTX. Must be quoted. "
+          "Example: --other-args '-seg no'")
 
         args = parser.parse_args(sys.argv[2:])
         return args
@@ -202,7 +202,6 @@ Use uce_to_protein <command> -h for help with arguments of the command of intere
         arguments = getattr(self, self.args.command)().__dict__
         argument_dictionary = command.copy()
         argument_dictionary.update(arguments)
-
         return argument_dictionary
 
 
@@ -227,14 +226,6 @@ def get_frames(alignment):
     return [hsp.frame for hsp in alignment.hsps]
 
 
-def check_overlap(tpl):
-    """ check if numbers overlap in tuple """
-    for index, pos in enumerate(tpl):
-        if index > 0:
-            if pos < tpl[index - 1]:
-                return True
-
-
 def get_nt_extracted(sign, nt_string, increasing_start_end):
     """ match and extract sequence from nucleotide string using best hit coordinates """
     seq = Seq(nt_string)
@@ -250,6 +241,14 @@ def get_nt_extracted(sign, nt_string, increasing_start_end):
             new_nt.insert(0, fragment)
 
     return "".join(new_nt)
+
+
+def check_overlap(tpl):
+    """ check if numbers overlap in tuple """
+    for index, pos in enumerate(tpl):
+        if index > 0:
+            if pos < tpl[index - 1]:
+                return True
 
 
 def queries_overlap(alignment):
@@ -274,12 +273,14 @@ def get_sorted_queries(sign, nucleotides, alignment):
     queries = [hsp.query for hsp in alignment.hsps]
     subjects = [hsp.sbjct for hsp in alignment.hsps]
     start_end = zip(starts, ends)
-    increasing_start_end = sorted(start_end, key=itemgetter(0)) # this is needed to check for overlap and extract from nt query
-    zipped = zip(starts, ends, queries, subjects) # this is needed to sort all according to strand
+    increasing_start_end = sorted(start_end, key=itemgetter(0))   # this is needed to check for overlap and extract from nt query
+    zipped = zip(starts, ends, queries, subjects)                 # this is needed to sort all according to strand
+
     if sign == "plus":
         sorted_zipped = sorted(zipped, key=itemgetter(0))
     elif sign == "minus":
         sorted_zipped = sorted(zipped, key=itemgetter(0), reverse=True)
+
     sorted_starts, sorted_ends, sorted_queries, sorted_subjects = zip(*sorted_zipped)
 
     nt_query_string = get_nt_extracted(sign, nucleotides, increasing_start_end)
@@ -289,15 +290,76 @@ def get_sorted_queries(sign, nucleotides, alignment):
     return (nt_query_string, query_string, subject_string, sorted_starts, sorted_ends)
 
 
+def trim_introns_and_seqs_w_stop(nt_query, query, subject):
+    """ given highest scoring concatenated query and subject,
+    trim bases that correspond to long gaps in subject (likely introns)
+    and delete sequences that still have stop codons """
+    trimm_nt = []
+    trimm_aa = []
+    if find_intron(subject):
+        introns = list(find_intron(subject))
+
+        if len(introns) == 1:
+            intron_start = introns[0][0]
+            intron_end = introns[0][1]
+            trimm_nt.append(nt_query[:(intron_start * 3)])
+            trimm_nt.append(nt_query[(intron_end * 3):])
+            trimm_aa.append(query[:intron_start])
+            trimm_aa.append(query[intron_end:])
+
+        elif len(introns) == 2:
+            intron1_start = introns[0][0]
+            intron1_end = introns[0][1]
+            intron2_start = introns[1][0]
+            intron2_end = introns[1][1]
+            trimm_nt.append(nt_query[:(intron1_start * 3)])
+            trimm_nt.append(nt_query[(intron1_end * 3):(intron2_start * 3)])
+            trimm_nt.append(nt_query[(intron2_end * 3):])
+            trimm_aa.append(query[:intron1_start])
+            trimm_aa.append(query[intron1_end:intron2_start])
+            trimm_aa.append(query[intron2_end:])
+
+        elif len(introns) > 2:
+            for index, intron in enumerate(introns[:-1]):
+                if index == 0:
+                    intron1_start = intron[0]
+                    intron1_end = intron[1]
+                    trimm_nt.append(nt_query[:(intron1_start * 3)])                               # first exon
+                    trimm_aa.append(query[:intron1_start])
+
+                if index > 0:
+                    current_intron_start = intron[0]
+                    current_intron_end = intron[1]
+                    next_intron_start = introns[index+1][0]
+                    trimm_nt.append(nt_query[(current_intron_end * 3):(next_intron_start * 3)])   # intermediate exons
+                    trimm_aa.append(query[current_intron_end:next_intron_start])
+
+            last_intron_start = introns[-1][1]
+            last_intron_end = introns[-1][1]
+            trimm_nt.append(nt_query[(last_intron_end * 3):])                                     # last exon
+            trimm_aa.append(query[last_intron_end:])
+
+    else:
+        trimm_nt.append(nt_query)
+        trimm_aa.append(query)
+
+    trimmed_nt = "".join(trimm_nt)
+    trimmed_aa = "".join(trimm_aa)
+
+    if "*" not in trimmed_aa:    # exclude sequences that still have stop codon
+        return (trimmed_nt, trimmed_aa)
+
+
 def add_to_highest_scoring_dict(highest_score_dict, nucleotides, key, alignment):
     """ assign items to dictionary of highest scoring hits """
 
     if queries_overlap(alignment) is False:    # do not append if ranges overlap
         frames = get_frames(alignment)
-        if frames[0][0] > 0: # checking sign of first frame
+        if frames[0][0] > 0:                   # checking sign of first frame
             sign = "plus"
         elif frames[0][0] < 0:
             sign = "minus"
+
         (nt_query, query, subject, sorted_starts, sorted_ends) = get_sorted_queries(sign, nucleotides, alignment)
         trimmed_queries = trim_introns_and_seqs_w_stop(nt_query, query, subject)
         subject_gene_name = alignment.title
@@ -306,6 +368,7 @@ def add_to_highest_scoring_dict(highest_score_dict, nucleotides, key, alignment)
             (trimmed_nt_query, trimmed_query) = trimmed_queries
         except TypeError:
             trimmed_query = False
+
         if trimmed_query:    # in case trimmed query was excluded because it still had stop codons
                 highest_score_dict[key] = (
                  trimmed_nt_query, trimmed_query, query, subject,
@@ -314,14 +377,14 @@ def add_to_highest_scoring_dict(highest_score_dict, nucleotides, key, alignment)
 
 def get_highest_scoring(records, nucleotide):
     """ get a dictionary of { species : 'best' hit } from parsed BLASTX output """
-    nt_dict = {record.id : str(record.seq) for record in nucleotide} # { species : nt sequence } made from parsed FASTA file
+    nt_dict = {record.id : str(record.seq) for record in nucleotide}    # { species : nt sequence } made from parsed FASTA file
     highest_scoring_dict = {}
     try:
         for item in records:
 
             species_dict = defaultdict(list)
 
-            for alignment in item.alignments: # alignment here refers to BLAST hit
+            for alignment in item.alignments:                           # alignment here refers to BLAST hit
                 species_dict[item.query].append(alignment)
 
             for species, alignments in species_dict.items():
@@ -337,7 +400,11 @@ def get_highest_scoring(records, nucleotide):
 
                 for alignment in alignments:
                     scores = [hsp.score for hsp in alignment.hsps]
-                    nt = nt_dict[species]
+                    try:
+                        nt = nt_dict[species]
+                    except KeyError:
+                        print("ERROR: It appears taxa names do not match between your FASTA and XML files")
+                        sys.exit()
                     if scores:
                         total_alignment_score = sum(scores)
                         max_alignment_score = max(scores)
@@ -363,61 +430,6 @@ def get_highest_scoring(records, nucleotide):
         sys.stdout.flush()
 
     return highest_scoring_dict
-
-
-def trim_introns_and_seqs_w_stop(nt_query, query, subject):
-    """ given highest scoring concatenated query and subject,
-    trim bases that correspond to long gaps in subject (likely introns)
-    and delete sequences that still have stop codons """
-    trimm_nt = []
-    trimm_aa = []
-    if find_intron(subject):
-        introns = list(find_intron(subject))
-        if len(introns) == 1:
-            intron_start = introns[0][0]
-            intron_end = introns[0][1]
-            trimm_nt.append(nt_query[:(intron_start * 3)])
-            trimm_nt.append(nt_query[(intron_end * 3):])
-            trimm_aa.append(query[:intron_start])
-            trimm_aa.append(query[intron_end:])
-        elif len(introns) == 2:
-            intron1_start = introns[0][0]
-            intron1_end = introns[0][1]
-            intron2_start = introns[1][0]
-            intron2_end = introns[1][1]
-            trimm_nt.append(nt_query[:(intron1_start * 3)])
-            trimm_nt.append(nt_query[(intron1_end * 3):(intron2_start * 3)])
-            trimm_nt.append(nt_query[(intron2_end * 3):])
-            trimm_aa.append(query[:intron1_start])
-            trimm_aa.append(query[intron1_end:intron2_start])
-            trimm_aa.append(query[intron2_end:])
-        elif len(introns) > 2:
-            for index, intron in enumerate(introns[:-1]):
-                if index == 0:
-                    intron1_start = intron[0]
-                    intron1_end = intron[1]
-                    trimm_nt.append(nt_query[:(intron1_start * 3)]) # first exon
-                    trimm_aa.append(query[:intron1_start])
-                if index > 0:
-                    current_intron_start = intron[0]
-                    current_intron_end = intron[1]
-                    next_intron_start = introns[index+1][0]
-                    trimm_nt.append(nt_query[(current_intron_end * 3):(next_intron_start * 3)]) # intermediate exons
-                    trimm_aa.append(query[current_intron_end:next_intron_start])
-            last_intron_start = introns[-1][1]
-            last_intron_end = introns[-1][1]
-            trimm_nt.append(nt_query[(last_intron_end * 3):]) # last exon
-            trimm_aa.append(query[last_intron_end:])
-
-    else:
-        trimm_nt.append(nt_query)
-        trimm_aa.append(query)
-
-    trimmed_nt = "".join(trimm_nt)
-    trimmed_aa = "".join(trimm_aa)
-
-    if "*" not in trimmed_aa:  # exclude sequences that still have stop codon
-        return (trimmed_nt, trimmed_aa)
 
 
 def create_sqlite_db(db_name):
@@ -495,9 +507,10 @@ def populate_sqlite_db(fasta_file_name, blast_file_name, db_name):
     base_uce_name = fasta_file_name.split(".")[0]
     base_uce_name_xml = blast_file_name.split(".")[0]
     if base_uce_name != base_uce_name_xml:
-        print("WARNING: Locus names of your files {} and {} do no match.\nAre you sure you are comparing the right files?".format(
+        print("ERROR: Locus names of your files '{}' and '{}' do no match.\nAre you sure you are comparing the right files?".format(
          blast_file_name, fasta_file_name))
         sys.stdout.flush()
+        sys.exit()
     highest_scoring_dict = input_parse(blast_file_name, fasta_file_name)
     if highest_scoring_dict:
         print("Got best hit for {} ...".format(base_uce_name))
@@ -520,7 +533,7 @@ def call_blast(call_string):
     b = re.search("-db (\S+)", call_string)
     file_name = a.group(1)
     database = b.group(1)
-    print("Blasting file {} against protein database {} ...".format(file_name, database))
+    print("Blasting file '{}' against protein database '{}' ...".format(file_name, database))
     sys.stdout.flush()
     try:
         p = subprocess.call(call_string, shell=True)
@@ -528,6 +541,29 @@ def call_blast(call_string):
         print("\nYou killed the query")
         sys.stdout.flush()
         sys.exit()
+
+
+def query_taxa_from_sqlite(db_name, taxa):
+    """ query sqlite database for all records and extract those in config """
+    conn = sqlite3.connect(db_name)
+
+    with conn:
+        cur = conn.cursor()
+        # get data for all taxa
+        cur.execute(
+         """SELECT uce_name, taxon_name, trimmed_nuc_query, trimmed_prot_query FROM Sequences 
+         INNER JOIN Uces ON Sequences.uce_name_ID = Uces.uce_name_ID 
+         INNER JOIN Taxa ON Sequences.taxon_name_ID = Taxa.taxon_name_ID""")
+        rows = cur.fetchall()
+        group_rows = [row for row in rows if row[1] in taxa]
+        sorted_group_rows = sorted(group_rows, key=itemgetter(1))
+        uces_dict = defaultdict(list)
+
+        for row in sorted_group_rows:
+            row_uce, taxon, nt_seq, aa_seq = row
+            uces_dict[row_uce].append((taxon, nt_seq, aa_seq))
+
+        return uces_dict
 
 
 def write_fasta_to_xml_config(**kwargs):
@@ -562,29 +598,12 @@ def parse_taxon_config(config_name, group):
     except KeyError:
         print("ERROR: No group named {} in {}".format(group, config_name))
         sys.stdout.flush()
+        sys.exit()
 
 
-def query_taxa_from_sqlite(db_name, taxa):
-    """ query sqlite database for all records and extract those in config """
-    conn = sqlite3.connect(db_name)
-
-    with conn:
-        cur = conn.cursor()
-        # get data for all taxa
-        cur.execute(
-         """SELECT uce_name, taxon_name, trimmed_nuc_query, trimmed_prot_query FROM Sequences 
-         INNER JOIN Uces ON Sequences.uce_name_ID = Uces.uce_name_ID 
-         INNER JOIN Taxa ON Sequences.taxon_name_ID = Taxa.taxon_name_ID""")
-        rows = cur.fetchall()
-        group_rows = [row for row in rows if row[1] in taxa]
-        sorted_group_rows = sorted(group_rows, key=itemgetter(1))
-        uces_dict = defaultdict(list)
-
-        for row in sorted_group_rows:
-            row_uce, taxon, nt_seq, aa_seq = row
-            uces_dict[row_uce].append((taxon, nt_seq, aa_seq))
-
-        return uces_dict
+def drop_3rd_codon_pos(seq):
+    """ drop every third character from sequence """
+    return "".join([char for index, char in enumerate(seq) if (index + 1) % 3 != 0])
 
 
 def write_fasta(uces_dict, group):
@@ -610,20 +629,15 @@ def write_fasta(uces_dict, group):
             prot_seq = SeqRecord(Seq(aa_seq), id=taxon_name, description="")
             bio_prot_seqs.append(prot_seq)
 
-        print("Writing coding nucleotide fasta file {}".format(nt_file_name))
+        print("Writing coding nucleotide fasta file '{}'".format(nt_file_name))
         sys.stdout.flush()
         SeqIO.write(bio_nt_seqs, nt_file_name, "fasta")
-        print("Writing 3rd codon positions removed fasta file {}".format(no3rd_file_name))
+        print("Writing 3rd codon positions removed fasta file '{}'".format(no3rd_file_name))
         sys.stdout.flush()
         SeqIO.write(bio_no3rd_seqs, no3rd_file_name, "fasta")
-        print("Writing protein fasta file {}".format(prot_file_name))
+        print("Writing protein fasta file '{}'".format(prot_file_name))
         sys.stdout.flush()
         SeqIO.write(bio_prot_seqs, prot_file_name, "fasta")
-
-
-def drop_3rd_codon_pos(seq):
-    """ drop every third character from sequence """
-    return "".join([char for index, char in enumerate(seq) if (index + 1) % 3 != 0])
 
 
 def main():
@@ -684,7 +698,7 @@ def main():
 
 def run():
 
-    config = ParsedArgs()    # initialize parsed arguments
+    config = ParsedArgs()                   # initialize parsed arguments
     config_dict = config.get_args_dict()    # get arguments
     return config_dict
 
