@@ -225,18 +225,19 @@ def find_intron(string):
             spans.append(match.span())
         return spans
 
-def get_bits(alignment):
-    """ get bits from all matches in alignment """
-    return [(hsp.bits) for hsp in alignment.hsps]
-
 def get_frames(alignment):
     """ get frames from all matches in alignment """
     return [hsp.frame for hsp in alignment.hsps]
 
-def get_nt_extracted(sign, nt_string, starts, ends):
+def check_overlap(tpl):
+    """ check if numbers overlap in tuple """
+    for index, pos in enumerate(tpl):
+        if index > 0:
+            if pos < tpl[index - 1]:
+                return True
+
+def get_nt_extracted(sign, nt_string, increasing_start_end):
     """ match and extract sequence from nucleotide string using best hit coordinates """ 
-    start_end = zip(starts, ends)
-    increasing_start_end = sorted(start_end, key=itemgetter(0)) # this is needed to extract from nt query
     seq = Seq(nt_string)
     new_nt = []
     for start, end in increasing_start_end:
@@ -251,50 +252,61 @@ def get_nt_extracted(sign, nt_string, starts, ends):
 
     return "".join(new_nt)
 
+def queries_overlap(alignment):
+    """ check if ranges of hsps queries overlap """
+    starts = [int(hsp.query_start) for hsp in alignment.hsps]
+    ends = [int(hsp.query_end) for hsp in alignment.hsps]
+    start_end = zip(starts, ends)
+    increasing_start_end = sorted(start_end, key=itemgetter(0))
+    flat_incr_start_end = tuple(sum(increasing_start_end, ()))
+
+    if check_overlap(flat_incr_start_end):
+        return True
+    else:
+        return False
+
 def get_sorted_queries(sign, nucleotides, alignment):
     """ get hsps queries and subject sorted by query start,
     either ascending or descenging, depending on strand """
-    queries = [hsp.query for hsp in alignment.hsps]
-    subjects = [hsp.sbjct for hsp in alignment.hsps]
     starts = [int(hsp.query_start) for hsp in alignment.hsps]
     ends = [int(hsp.query_end) for hsp in alignment.hsps]
-
-    zipped = zip(starts, ends, queries, subjects)
+    queries = [hsp.query for hsp in alignment.hsps]
+    subjects = [hsp.sbjct for hsp in alignment.hsps]
+    start_end = zip(starts, ends)
+    increasing_start_end = sorted(start_end, key=itemgetter(0)) # this is needed to check for overlap and extract from nt query
+    zipped = zip(starts, ends, queries, subjects) # this is needed to sort all according to strand
     if sign == "plus":
         sorted_zipped = sorted(zipped, key=itemgetter(0))
     elif sign == "minus":
         sorted_zipped = sorted(zipped, key=itemgetter(0), reverse=True)
     sorted_starts, sorted_ends, sorted_queries, sorted_subjects = zip(*sorted_zipped)
 
-    nt_query_string = get_nt_extracted(sign, nucleotides, starts, ends)
+    nt_query_string = get_nt_extracted(sign, nucleotides, increasing_start_end)
     query_string = ''.join(sorted_queries)
     subject_string = ''.join(sorted_subjects)
 
     return (nt_query_string, query_string, subject_string, sorted_starts, sorted_ends)
 
-def add_to_highest_scoring_dict(highest_score_dict, nucleotides, key, alignment, check_length="no", query_length=0):
+def add_to_highest_scoring_dict(highest_score_dict, nucleotides, key, alignment):
     """ assign items to dictionary of highest scoring hits """
-    subject_gene_name = alignment.title
-    bits = get_bits(alignment)
-    frames = get_frames(alignment)
-    if frames[0][0] > 0: # checking sign of first frame 
-        sign = "plus"
-    elif frames[0][0] < 0:
-        sign = "minus"
-    nt_query, query, subject, sorted_starts, sorted_ends = get_sorted_queries(sign, nucleotides, alignment)
-    trimmed_queries = trim_introns_and_seqs_w_stop(nt_query, query, subject)
-    try:
-        (trimmed_nt_query, trimmed_query) = trimmed_queries
-    except TypeError:
-        trimmed_query = False
-    if trimmed_query:
-        if check_length == "no":
-            highest_score_dict[key] = (trimmed_nt_query, trimmed_query, query, subject, 
-             bits, frames, sorted_starts, sorted_ends, subject_gene_name)
-        elif check_length == "yes":
-            if len(query) >= 30 and len(query) <= query_length / 3:
+
+    if queries_overlap(alignment) is False:    # do not append if ranges overlap
+        frames = get_frames(alignment)
+        if frames[0][0] > 0: # checking sign of first frame 
+            sign = "plus"
+        elif frames[0][0] < 0:
+            sign = "minus"
+        nt_query, query, subject, sorted_starts, sorted_ends = get_sorted_queries(sign, nucleotides, alignment)
+        trimmed_queries = trim_introns_and_seqs_w_stop(nt_query, query, subject)
+        subject_gene_name = alignment.title
+
+        try:
+            (trimmed_nt_query, trimmed_query) = trimmed_queries
+        except TypeError:
+            trimmed_query = False
+        if trimmed_query:
                 highest_score_dict[key] = (trimmed_nt_query, trimmed_query, query, subject, 
-                 bits, frames, sorted_starts, sorted_ends, subject_gene_name)
+                 frames, sorted_starts, sorted_ends, subject_gene_name)
             
 def get_highest_scoring(records, nucleotide):
     """ get a dictionary of { species : 'best' hit } from parsed BLASTX output """
@@ -302,7 +314,7 @@ def get_highest_scoring(records, nucleotide):
     highest_scoring_dict = {}
     try:
         for item in records:
-            query_len = item.query_letters
+
             species_dict = defaultdict(list)
 
             for alignment in item.alignments: # alignment here refers to BLAST hit
@@ -328,10 +340,11 @@ def get_highest_scoring(records, nucleotide):
                         # if total score equals max score and is also best total score, take it
                         if total_alignment_score == max_alignment_score and total_alignment_score == max(total_species_scores):
                             add_to_highest_scoring_dict(highest_scoring_dict, nt, species, alignment)
+                        
                         # if total score > max score, check if this is the best total score
                         elif total_alignment_score > max_alignment_score and total_alignment_score == max(total_species_scores):
-                            # if the query is not too long, keep it
-                            add_to_highest_scoring_dict(highest_scoring_dict, nt, species, alignment, check_length="yes", query_length=query_len)
+                            add_to_highest_scoring_dict(highest_scoring_dict, nt, species, alignment)
+                            
                         # if total score equals max score but is not the best total score, check if it is best max score, then take it
                         # else skip it
                         elif total_alignment_score == max_alignment_score and max_alignment_score == max(max_species_scores):
@@ -339,6 +352,7 @@ def get_highest_scoring(records, nucleotide):
 
     except ExpatError:
         print("Unexpected end of xml file...")
+        sys.stdout.flush()
 
     return highest_scoring_dict
 
@@ -432,7 +446,7 @@ def add_to_sqlite_db(uce_name, seq_dict, db_name):
         uce_ID = int(cur.fetchone()[0])
 
         for species, seq in seq_dict.items():
-            (trimmed_nuc_query, trimmed_prot_query, untrimmed_prot_query, subject, bits, frames, query_s, query_e, gene) = seq
+            (trimmed_nuc_query, trimmed_prot_query, untrimmed_prot_query, subject, frames, query_s, query_e, gene) = seq
 
             cur.execute("INSERT OR IGNORE INTO Taxa(taxon_name) VALUES (?)", (species, ))
             cur.execute("INSERT OR IGNORE INTO Hitnames(hit_name) VALUES (?)", (gene, ))
@@ -464,12 +478,15 @@ def populate_sqlite_db(fasta_file_name, blast_file_name, db_name):
     if base_uce_name != base_uce_name_xml:
         print("WARNING: Locus names of your files {} and {} do no match.\nAre you sure you are comparing the right files?".format(
             blast_file_name, fasta_file_name))
+        sys.stdout.flush()
     highest_scoring_dict = input_parse(blast_file_name, fasta_file_name)
     if highest_scoring_dict:
-        print("Got best hit for {}...".format(base_uce_name))
+        print("Got best hit for {} ...".format(base_uce_name))
+        sys.stdout.flush()
         add_to_sqlite_db(base_uce_name, highest_scoring_dict, db_name)
     else:
         print("Locus {} contains no protein matches".format(base_uce_name))
+        sys.stdout.flush()
     
 def get_blast_call_string(in_file, db_name, e_value, other_args):
     """ make command line call string for BLASTX """
@@ -482,11 +499,13 @@ def call_blast(call_string):
     b = re.search("-db (\S+)", call_string)
     file_name = a.group(1)
     database = b.group(1)
-    print("Blasting file {} against protein database {}...".format(file_name, database))
+    print("Blasting file {} against protein database {} ...".format(file_name, database))
+    sys.stdout.flush()
     try:
         p = subprocess.call(call_string, shell=True)
     except KeyboardInterrupt:
         print("\nYou killed the query")
+        sys.stdout.flush()
         sys.exit()
 
 def write_fasta_to_xml_config(**kwargs):
@@ -497,6 +516,7 @@ def write_fasta_to_xml_config(**kwargs):
     with open(kwargs["out_config"], "w") as outconfig:
         config.write(outconfig)
     print("Wrote config file {}".format(kwargs["out_config"]))
+    sys.stdout.flush()
 
 def parse_fasta_to_xml_config(config_name):
     """ parse fasta, xml file name pairs from config """
@@ -517,6 +537,7 @@ def parse_taxon_config(config_name, group):
         return [taxon for taxon in config[group]]
     except KeyError:
         print("ERROR: No group named {} in {}".format(group, config_name))
+        sys.stdout.flush()
 
 def query_taxa_from_sqlite(db_name, taxa):
     """ query sqlite database for all records and extract those in config """
@@ -526,8 +547,8 @@ def query_taxa_from_sqlite(db_name, taxa):
         cur = conn.cursor()
         # get data for all taxa
         cur.execute("""SELECT uce_name, taxon_name, trimmed_nuc_query, trimmed_prot_query FROM Sequences 
-            INNER JOIN Uces ON Sequences.uce_name_ID = Uces.uce_name_ID 
-            INNER JOIN Taxa ON Sequences.taxon_name_ID = Taxa.taxon_name_ID""")
+         INNER JOIN Uces ON Sequences.uce_name_ID = Uces.uce_name_ID 
+         INNER JOIN Taxa ON Sequences.taxon_name_ID = Taxa.taxon_name_ID""")
         rows = cur.fetchall()
         group_rows = [row for row in rows if row[1] in taxa]
         sorted_group_rows = sorted(group_rows, key=itemgetter(1))
@@ -563,10 +584,13 @@ def write_fasta(uces_dict, group):
             bio_prot_seqs.append(prot_seq)
 
         print("Writing coding nucleotide fasta file {}".format(nt_file_name))
+        sys.stdout.flush()
         SeqIO.write(bio_nt_seqs, nt_file_name, "fasta")
         print("Writing 3rd codon positions removed fasta file {}".format(no3rd_file_name))
+        sys.stdout.flush()
         SeqIO.write(bio_no3rd_seqs, no3rd_file_name, "fasta")
         print("Writing protein fasta file {}".format(prot_file_name))
+        sys.stdout.flush()
         SeqIO.write(bio_prot_seqs, prot_file_name, "fasta")
 
 def drop_3rd_codon_pos(seq):
@@ -577,7 +601,7 @@ def main():
 
     kwargs = run()
     arg_creator = ArgCreator(**kwargs)  # initialize parsed arguments and argument creator object
-       
+
     if arg_creator.command == "blastdb":
         call_string = "makeblastdb -in {} -dbtype prot -out {} {}".format(
          kwargs["prot_input"], kwargs["output_db_name"], kwargs["other_args"])
@@ -614,8 +638,9 @@ def main():
         for pair in fasta_xml_pairs:
             (fasta_fn, blast_fn) = pair 
             populate_sqlite_db(fasta_fn, blast_fn, db_name)
-            
+
         print("Wrote results to {} database".format(db_name))
+        sys.stdout.flush()
 
     if arg_creator.command == "queryprot":
         db_name = kwargs["best_hits_db"]
@@ -630,7 +655,7 @@ def run():
     config = ParsedArgs()    # initialize parsed arguments
     config_dict = config.get_args_dict()    # get arguments
     return config_dict
-    
+
 if __name__ == '__main__':
         
         main()
