@@ -157,7 +157,6 @@ Use uce_to_protein <command> -h for help with arguments of the command of intere
          type = str,
          required = True,
          dest = "fasta_to_xml_config",
-         default = "fasta_to_xml.conf",
          help = "Name of configuration file that lists corresponding nucleotide "
           "FASTA and BLASTX XML files")
         parser.add_argument(
