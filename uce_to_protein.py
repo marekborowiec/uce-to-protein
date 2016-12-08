@@ -247,7 +247,7 @@ def check_overlap(tpl):
     """ check if numbers overlap in tuple """
     for index, pos in enumerate(tpl):
         if index > 0:
-            if pos < tpl[index - 1]:
+            if pos <= tpl[index - 1]:
                 return True
 
 
@@ -281,7 +281,7 @@ def get_sorted_queries(sign, nucleotides, alignment):
     elif sign == "minus":
         sorted_zipped = sorted(zipped, key=itemgetter(0), reverse=True)
 
-    sorted_starts, sorted_ends, sorted_queries, sorted_subjects = zip(*sorted_zipped)
+    (sorted_starts, sorted_ends, sorted_queries, sorted_subjects) = zip(*sorted_zipped)
 
     nt_query_string = get_nt_extracted(sign, nucleotides, increasing_start_end)
     query_string = ''.join(sorted_queries)
@@ -353,7 +353,7 @@ def trim_introns_and_seqs_w_stop(nt_query, query, subject):
 def add_to_highest_scoring_dict(highest_score_dict, nucleotides, key, alignment):
     """ assign items to dictionary of highest scoring hits """
 
-    if queries_overlap(alignment) is False:    # do not append if ranges overlap
+    if queries_overlap(alignment) is False:    # do not add if ranges overlap
         frames = get_frames(alignment)
         if frames[0][0] > 0:                   # checking sign of first frame
             sign = "plus"
@@ -414,6 +414,7 @@ def get_highest_scoring(records, nucleotide):
                             add_to_highest_scoring_dict(highest_scoring_dict, nt, species, alignment)
 
                         # if total score > max score, check if this is the best total score
+                        # at this step alignment will be rejected if ranges overlap
                         elif total_alignment_score > max_alignment_score \
                                 and total_alignment_score == max(total_species_scores):
                             add_to_highest_scoring_dict(highest_scoring_dict, nt, species, alignment)
