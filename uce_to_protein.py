@@ -507,7 +507,8 @@ def populate_sqlite_db(fasta_file_name, blast_file_name, db_name):
     base_uce_name = fasta_file_name.split(".")[0]
     base_uce_name_xml = blast_file_name.split(".")[0]
     if base_uce_name != base_uce_name_xml:
-        print("ERROR: Locus names of your files '{}' and '{}' do no match.\nAre you sure you are comparing the right files?".format(
+        print("ERROR: Locus names of your files '{}' and '{}' do no match.\n"
+         "Are you sure you are comparing the right files?".format(
          blast_file_name, fasta_file_name))
         sys.stdout.flush()
         sys.exit()
@@ -523,7 +524,8 @@ def populate_sqlite_db(fasta_file_name, blast_file_name, db_name):
 
 def get_blast_call_string(in_file, db_name, e_value, other_args):
     """ make command line call string for BLASTX """
-    call_string = "blastx -query {0} -db {1} -outfmt 5 -evalue {2} {3} > {0}.xml".format(in_file, db_name, e_value, other_args)
+    call_string = "blastx -query {0} -db {1} -outfmt 5 -evalue {2} {3} > {0}.xml".format(
+     in_file, db_name, e_value, other_args)
     return call_string
 
 
