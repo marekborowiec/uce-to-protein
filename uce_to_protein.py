@@ -693,9 +693,14 @@ def main():
         db_name = kwargs["best_hits_db"]
         config_name = kwargs["taxon_config"]
         group = kwargs["taxon_group"]
-        taxa = parse_taxon_config(config_name, group)
-        uces_dict = query_taxa_from_sqlite(db_name, taxa)
-        write_fasta(uces_dict, group)
+        if os.path.exists(config_name):
+            taxa = parse_taxon_config(config_name, group)
+            uces_dict = query_taxa_from_sqlite(db_name, taxa)
+            write_fasta(uces_dict, group)
+        else:
+            print("ERROR: file '{}' does not exist.".format(config_name))
+            sys.stdout.flush()
+            sys.exit()
 
 
 def run():
