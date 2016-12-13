@@ -696,9 +696,15 @@ def main():
         if os.path.exists(config_name):
             taxa = parse_taxon_config(config_name, group)
             uces_dict = query_taxa_from_sqlite(db_name, taxa)
-            write_fasta(uces_dict, group)
+            if uces_dict:
+                write_fasta(uces_dict, group)
+            else:
+                print("ERROR: Taxa from '{}' do not match any in your '{}' database.".format(
+                 group, db_name)) 
+                sys.stdout.flush()
+                sys.exit()
         else:
-            print("ERROR: file '{}' does not exist.".format(config_name))
+            print("ERROR: File '{}' does not exist.".format(config_name))
             sys.stdout.flush()
             sys.exit()
 
