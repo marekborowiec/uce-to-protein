@@ -149,4 +149,6 @@ The output will be written for all loci in the database, as three FASTA files fo
 
 It is probably a good idea to further trim the alignments for both ambiguously aligned sites and taxa. This workflow is experimental. Use caution and examine your trimmed alignments visually for outliers using a fast and light-weight tool such as [Aliview](http://www.ormbunkar.se/aliview/).
 
+# uce-to-protein flowchart
+
 ![uce-to-protein-workflow](https://cdn.rawgit.com/marekborowiec/uce-to-protein/3ea1152c/uce-to-protein-flowchart.svg)
