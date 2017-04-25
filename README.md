@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/72648285.svg)](https://zenodo.org/badge/latestdoi/72648285)
+
 # UCE TO PROTEIN
 A workflow for extracting protein-coding sequences from UCE data used in phylogenetics.
 
