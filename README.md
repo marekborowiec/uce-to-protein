@@ -32,7 +32,7 @@ For each sequence (taxon) and hit within, both total and maximum scores are tall
 
 If introns that do not change reading frame are present, translations of the query sequence may span across them. Because of this additional trimming is done if long (4 sites or more) gaps in the subject protein sequence are found. All sites corresponding to those long gaps are trimmed from the protein query and its nucleotide equivalent. If at this point there is still a stop codon in the protein query, such record is discarded.
 
-For each record a protein query and its corresponding nucleotides are now considered ready for downstream analyses. For convenience, UCE locus name, taxon name, protein database hit name, trimmed nucleotide query, trimmed protein query, untrimmed protein query, and protein subject are written to an SQLite database.
+For each record a protein query and its corresponding nucleotides are now considered ready for downstream analyses. For convenience, UCE locus name, taxon name, protein database hit name, trimmed nucleotide query, trimmed protein query, untrimmed protein query, and protein subject are written to an SQLite database. See towards the end of this README for a general workflow of this pipeline. 
 
 ## Installation and requirements
 
@@ -148,3 +148,5 @@ Genus_species_UG03
 The output will be written for all loci in the database, as three FASTA files for each locus: 1) trimmed protein sequence found, 2) its corresponding nucleotide sequence, and 3) the nucleotide sequence with 3rd codon position removed. These files should be ready for alignment.
 
 It is probably a good idea to further trim the alignments for both ambiguously aligned sites and taxa. This workflow is experimental. Use caution and examine your trimmed alignments visually for outliers using a fast and light-weight tool such as [Aliview](http://www.ormbunkar.se/aliview/).
+
+![uce-to-protein-workflow](https://github.com/marekborowiec/uce-to-protein/uce-to-protein-flowchart.png)
