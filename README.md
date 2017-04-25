@@ -34,7 +34,7 @@ For each sequence (taxon) and hit within, both total and maximum scores are tall
 
 If introns that do not change reading frame are present, translations of the query sequence may span across them. Because of this additional trimming is done if long (4 sites or more) gaps in the subject protein sequence are found. All sites corresponding to those long gaps are trimmed from the protein query and its nucleotide equivalent. If at this point there is still a stop codon in the protein query, such record is discarded.
 
-For each record a protein query and its corresponding nucleotides are now considered ready for downstream analyses. For convenience, UCE locus name, taxon name, protein database hit name, trimmed nucleotide query, trimmed protein query, untrimmed protein query, and protein subject are written to an SQLite database. See towards the end of this README for a general workflow of this pipeline. 
+For each record a protein query and its corresponding nucleotides are now considered ready for downstream analyses. For convenience, UCE locus name, taxon name, protein database hit name, trimmed nucleotide query, trimmed protein query, untrimmed protein query, and protein subject are written to an SQLite database. See towards the end of this README for a flowchart of this pipeline. 
 
 ## Installation and requirements
 
