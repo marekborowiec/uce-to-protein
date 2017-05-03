@@ -3,17 +3,14 @@
 # UCE TO PROTEIN
 A workflow for extracting protein-coding sequences from UCE data used in phylogenetics.
 
-If you are using this program, please cite @@@:
+If you are using this program, please cite:
 
-
-@@@
-
+Borowiec M. L. 2017. Convergent evolution of the army ant syndrome and congruence in big-data phylogenetics. bioRxiv.
 
 This script uses Biopython:
 
 
 Cock PA, Antao T, Chang JT, Bradman BA, Cox CJ, Dalke A, Friedberg I, Hamelryck T, Kauff F, Wilczynski B and de Hoon MJL (2009) Biopython: freely available Python tools for computational molecular biology and bioinformatics. Bioinformatics 25:1422-1423.
-
 
 
 And NCBI BLASTX:
