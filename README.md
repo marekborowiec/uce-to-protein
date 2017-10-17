@@ -154,4 +154,4 @@ It is probably a good idea to further trim the alignments for both ambiguously a
 
 # SQLite database structure
 
-![uce-protein-db](uce-to-protein/uce-protein-db.svg)
+![uce-protein-db](https://raw.githubusercontent.com/marekborowiec/uce-to-protein/master/uce-protein-db.svg)
