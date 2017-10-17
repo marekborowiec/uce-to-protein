@@ -151,3 +151,7 @@ It is probably a good idea to further trim the alignments for both ambiguously a
 # uce-to-protein flowchart
 
 ![uce-to-protein-workflow](https://cdn.rawgit.com/marekborowiec/uce-to-protein/7d26ad06/uce-to-protein-flowchart.svg)
+
+# SQLite database structure
+
+![uce-protein-db](uce-to-protein/uce-protein-db.svg)
