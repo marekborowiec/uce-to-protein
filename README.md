@@ -5,7 +5,7 @@ A workflow for extracting protein-coding sequences from UCE data used in phyloge
 
 If you are using this program, please cite:
 
-Borowiec M. L. 2017. Convergent evolution of the army ant syndrome and congruence in big-data phylogenetics. bioRxiv.
+Borowiec M. L. 2019. Convergent evolution of the army ant syndrome and congruence in big-data phylogenetics. Systematic Biology 68(4):642-656.
 
 This script uses Biopython:
 
